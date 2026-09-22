@@ -113,19 +113,6 @@ RUN set -e; cd /tmp; \
     fetch SDL_image SDL2_image ${SDL2_IMAGE_MINGW_VERSION}; \
     fetch SDL_mixer SDL2_mixer ${SDL2_MIXER_MINGW_VERSION}; \
     fetch SDL_ttf   SDL2_ttf   ${SDL2_TTF_MINGW_VERSION}
-# llvm-mingw: a UCRT-targeting clang/mingw cross toolchain (github.com/mstorsjo/llvm-mingw), for fast UCRT
-# Windows cross-builds on a Linux runner - what the PC tools (and, with UCRT SDL2, the emulators' windows
-# jobs) use instead of a windows-latest + setup-msys2 runner. Self-contained under /opt/llvm-mingw
-# (bin/x86_64-w64-mingw32-clang++ etc.); the CMake toolchain file /opt/win-llvm.cmake selects it. Bump
-# LLVM_MINGW_VERSION to the current release tag at build time if this one 404s.
-ARG LLVM_MINGW_VERSION=20260922
-ARG LLVM_MINGW_UBUNTU=ubuntu-22.04
-RUN cd /opt \
-    && wget -q "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-${LLVM_MINGW_UBUNTU}-x86_64.tar.xz" \
-    && tar -xf "llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-${LLVM_MINGW_UBUNTU}-x86_64.tar.xz" \
-    && mv "llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-${LLVM_MINGW_UBUNTU}-x86_64" /opt/llvm-mingw \
-    && rm -f "llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-${LLVM_MINGW_UBUNTU}-x86_64.tar.xz"
-COPY win-llvm.cmake /opt/win-llvm.cmake
 COPY ab-validate.sh /usr/local/bin/ab-validate
 RUN ab-validate mingw
 
@@ -396,6 +383,19 @@ RUN cd /tmp \
     && cd /tmp && rm -rf e2fsprogs-${E2FSPROGS_VERSION}* \
     && /usr/local/sbin/mke2fs -V 2>&1 | head -1
 ENV PATH="/usr/local/sbin:${PATH}"
+# llvm-mingw: a UCRT-targeting clang/mingw cross toolchain (github.com/mstorsjo/llvm-mingw), for fast UCRT
+# Windows cross-builds on a Linux runner - the PC tools (and, with UCRT SDL2, the emulators' windows jobs)
+# use it via /opt/win-llvm.cmake instead of a windows-latest + setup-msys2 runner. Late in the `all` stage so
+# the psc/pcusb layers stay cached. Bump LLVM_MINGW_VERSION to the current release tag if this one 404s.
+ARG LLVM_MINGW_VERSION=20260922
+ARG LLVM_MINGW_UBUNTU=ubuntu-22.04
+RUN cd /opt \
+    && wget -q "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-${LLVM_MINGW_UBUNTU}-x86_64.tar.xz" \
+    && tar -xf "llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-${LLVM_MINGW_UBUNTU}-x86_64.tar.xz" \
+    && mv "llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-${LLVM_MINGW_UBUNTU}-x86_64" /opt/llvm-mingw \
+    && rm -f "llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-${LLVM_MINGW_UBUNTU}-x86_64.tar.xz"
+COPY win-llvm.cmake /opt/win-llvm.cmake
+
 # sccache: a compiler cache in front of every compiler ci/build.sh configures (CMAKE_<LANG>_COMPILER_LAUNCHER,
 # so the native, Pi, MinGW and console builds all share it); docker/run.sh mounts the cache directory from
 # the host so it lives across containers. Last on purpose: a version bump rebuilds this layer only.

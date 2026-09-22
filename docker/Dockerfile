@@ -118,8 +118,8 @@ RUN set -e; cd /tmp; \
 # jobs) use instead of a windows-latest + setup-msys2 runner. Self-contained under /opt/llvm-mingw
 # (bin/x86_64-w64-mingw32-clang++ etc.); the CMake toolchain file /opt/win-llvm.cmake selects it. Bump
 # LLVM_MINGW_VERSION to the current release tag at build time if this one 404s.
-ARG LLVM_MINGW_VERSION=20250910
-ARG LLVM_MINGW_UBUNTU=ubuntu-20.04
+ARG LLVM_MINGW_VERSION=20260922
+ARG LLVM_MINGW_UBUNTU=ubuntu-22.04
 RUN cd /opt \
     && wget -q "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-${LLVM_MINGW_UBUNTU}-x86_64.tar.xz" \
     && tar -xf "llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-${LLVM_MINGW_UBUNTU}-x86_64.tar.xz" \

@@ -10,21 +10,28 @@
 #
 #   - uses: autobleem2/autobleem-build/.github/actions/signpath-sign@develop
 #     with:
+#       enabled: ${{ vars.AB_SIGNING_ENABLED == 'true' && github.event_name != 'pull_request' }}
 #       artifact: pc-tools-win64-unsigned
 #       path: stage
 #       api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-#       organization-id: ${{ github.event_name != 'pull_request' && vars.SIGNPATH_ORGANIZATION_ID || '' }}
+#       organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
 #       project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
 #       signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
 #       required: ${{ startsWith(github.ref, 'refs/tags/v') }}
 #
-# The job needs `permissions: actions: read, contents: read`. With no organization id or token (SignPath
-# not set up yet, a pull request) the files come back unsigned, with a warning. Every release-signing request
+# The job needs `permissions: actions: read, contents: read`. **Signing is switched off** unless `enabled`
+# is 'true' - each repository's `AB_SIGNING_ENABLED` variable, unset for now (the owner, 2026-09-24): the
+# files then come back as they were uploaded, quietly. Enabled with no organization id or token they come
+# back unsigned with a warning. Every release-signing request
 # waits for a person to approve it in SignPath: `required: true` (a v* tag) fails the job when it is refused
 # or not approved within `timeout` seconds; otherwise (a develop build) the files ship unsigned then.
 name: signpath-sign
 description: Sign this build's own Windows programs through SignPath; fall back to the unsigned files when allowed
 inputs:
+  enabled:
+    description: "'true' signs (the caller's AB_SIGNING_ENABLED switch, off for a pull request); anything else passes the files through"
+    required: false
+    default: 'false'
   artifact:
     description: name of the artifact uploaded earlier in this run (the staged folder)
     required: true
@@ -73,6 +80,7 @@ runs:
         NAME: ${{ inputs.artifact }}
         ORG: ${{ inputs.organization-id }}
         TOKEN: ${{ inputs.api-token }}
+        ENABLED: ${{ inputs.enabled }}
         PROJECT: ${{ inputs.project-slug }}
         POLICY: ${{ inputs.signing-policy-slug }}
       run: |
@@ -84,7 +92,7 @@ runs:
         echo "id=$id" >> "$GITHUB_OUTPUT"
         echo "project=${PROJECT:-${GITHUB_REPOSITORY#*/}}" >> "$GITHUB_OUTPUT"
         echo "policy=${POLICY:-release-signing}" >> "$GITHUB_OUTPUT"
-        if [ -n "$ORG" ] && [ -n "$TOKEN" ]; then
+        if [ "$ENABLED" = true ] && [ -n "$ORG" ] && [ -n "$TOKEN" ]; then
           echo "configured=true" >> "$GITHUB_OUTPUT"
         else
           echo "configured=false" >> "$GITHUB_OUTPUT"
@@ -120,11 +128,15 @@ runs:
       env:
         OUTCOME: ${{ steps.sign.outcome }}
         CONFIGURED: ${{ steps.find.outputs.configured }}
+        ENABLED: ${{ inputs.enabled }}
         URL: ${{ steps.sign.outputs.signing-request-web-url }}
       run: |
         if [ "$OUTCOME" = success ]; then
           echo "signed=true" >> "$GITHUB_OUTPUT"
           echo "signpath-sign: signed ($URL)"
+        elif [ "$ENABLED" != true ]; then
+          echo "signed=false" >> "$GITHUB_OUTPUT"
+          echo "signpath-sign: signing is switched off (AB_SIGNING_ENABLED) - the files pass through unsigned"
         elif [ "$CONFIGURED" = true ]; then
           echo "signed=false" >> "$GITHUB_OUTPUT"
           echo "::warning::signpath-sign: the signing request did not come back signed (${URL:-not created}) - shipping UNSIGNED Windows programs"

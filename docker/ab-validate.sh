@@ -153,6 +153,11 @@ case "$check" in
 ' ' ')"
         echo "  SDL2 audio backends: $audio"
         [[ " $audio " == *" alsa "* ]] || { echo "FAIL: no alsa backend in libSDL2" >&2; exit 1; }
+        [[ " $audio " != *" oss "* ]] || { echo "FAIL: oss backend in libSDL2 (the console has no OSS)" >&2; exit 1; }
+        # the version: 2.0.14 is the last SDL with a wl_shell window, the only shell the console's Weston has
+        sdlver="$(readlink /opt/psc/sdl2/lib/libSDL2-2.0.so.0)"
+        echo "  SDL2: $sdlver"
+        [[ "$sdlver" == libSDL2-2.0.so.0.1[24].0 ]] || { echo "FAIL: $sdlver - the console needs SDL2 <= 2.0.14 (wl_shell)" >&2; exit 1; }
         ;;
 
     *)

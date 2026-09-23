@@ -2,6 +2,9 @@
 # Build the autobleem-build image (docker/Dockerfile) on a Docker host - the build server, in practice.
 #
 #   docker/build-image.sh                      -> autobleem-build:latest (and :<git sha>)
+#   docker/build-image.sh --channel develop    -> autobleem-build:develop (and :<git sha>) - what every
+#                                              component's develop (nightly) build compiles in; :latest is
+#                                              master's, what the releases compile in
 #   docker/build-image.sh --target pi          one of the stages: base, native, pi, mingw, db, psc, all
 #   docker/build-image.sh --covers DIR         where coversJ.db/coversP.db/coversU.db are (see below)
 #   docker/build-image.sh --no-cache           rebuild every layer
@@ -16,6 +19,7 @@ cd "$(dirname "$0")"
 
 TAG="${AB_BUILD_IMAGE:-autobleem-build}"
 TARGET=all
+CHANNEL=latest
 COVERS="${AB_COVERS_DIR:-}"
 EXTRA=()
 while [ $# -gt 0 ]; do
@@ -23,6 +27,7 @@ while [ $# -gt 0 ]; do
         --target) TARGET="$2"; shift 2 ;;
         --covers) COVERS="$2"; shift 2 ;;
         --tag) TAG="$2"; shift 2 ;;
+        --channel) CHANNEL="$2"; shift 2 ;;
         --no-cache) EXTRA+=(--no-cache); shift ;;
         --build-arg) EXTRA+=(--build-arg "$2"); shift 2 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -70,6 +75,6 @@ else
 fi
 
 SHA="$(git -C .. rev-parse --short HEAD 2>/dev/null || echo unknown)"
-echo "==> docker build --target $TARGET -t $TAG:latest -t $TAG:$SHA"
-DOCKER_BUILDKIT=1 docker build --target "$TARGET" -t "$TAG:latest" -t "$TAG:$SHA" "${EXTRA[@]}" .
+echo "==> docker build --target $TARGET -t $TAG:$CHANNEL -t $TAG:$SHA"
+DOCKER_BUILDKIT=1 docker build --target "$TARGET" -t "$TAG:$CHANNEL" -t "$TAG:$SHA" "${EXTRA[@]}" .
 docker image ls "$TAG"

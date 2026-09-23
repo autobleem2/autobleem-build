@@ -1,7 +1,10 @@
 # Builds docker/Dockerfile - the autobleem-build image every component's CI compiles in - and publishes it as
-# ghcr.io/autobleem2/autobleem-build:latest and :<short sha> - from develop (what every dev build runs in) and
-# from master. This repo is the image's one source; the
-# launcher's old copy of docker/ and its image workflow are retired.
+# ghcr.io/autobleem2/autobleem-build:<channel> and :<short sha>. master's build is :latest, what the
+# components' v* releases compile in. develop's build is :develop, what their develop builds compile in - the
+# rolling nightlies the appliance's nightly is assembled from (the owner's rule, 2026-09-23: a nightly is
+# develop all the way down, the compilers included). Both used to push :latest, so whichever branch built
+# last decided what every build ran in. This repo is the image's one source; the launcher's old copy of
+# docker/ and its image workflow are retired.
 #
 # Self-hosted for the layer cache: `docker build` runs on the build server's daemon through the mounted
 # socket, so a change late in the Dockerfile rebuilds only the layers after it (a cold build is about an
@@ -54,6 +57,8 @@ jobs:
       packages: write
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/autobleem-build
+      # master -> :latest (the releases'), any other ref -> :develop (the nightlies')
+      CHANNEL: ${{ github.ref == 'refs/heads/master' && 'latest' || 'develop' }}
     steps:
       - uses: actions/checkout@v7
       - name: Build (every stage validates itself with docker/ab-validate.sh)
@@ -62,14 +67,14 @@ jobs:
           image="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')"
           args=()
           [ "${{ inputs.no_cache }}" = "true" ] && args+=(--no-cache)
-          docker/build-image.sh --tag "$image" "${args[@]}"
+          docker/build-image.sh --tag "$image" --channel "$CHANNEL" "${args[@]}"
       - name: Push
         if: github.event_name != 'workflow_dispatch' || inputs.push
         run: |
           set -euo pipefail
           image="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')"
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker push "$image:latest"
+          docker push "$image:$CHANNEL"
           docker push "$image:$(git rev-parse --short HEAD)"
       - name: Summary
         run: |

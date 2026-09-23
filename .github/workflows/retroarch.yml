@@ -1,0 +1,149 @@
+# The appliances' RetroArch and cores on the download site (was the launcher's site-refresh.yml, disabled
+# there; the scripts live here since the split): ci/build_retroarch.sh cross-builds RetroArch for the Pis and
+# the PC stick (win64 is libretro's own build repacked), ci/build_cores.sh packs buildbot's cores + bundles as
+# one tarball per architecture (nothing compiled). Every architecture builds in parallel on a hosted runner,
+# in this repo's image; publishing writes the site's disk, so it runs on the self-hosted runner.
+#
+#   armhf, arm64 -> rpi/retroarch/<tag>/ + rpi/cores/<arch>/     i386  -> pc/retroarch/<tag>/ + pc/cores/i386/
+#   win64        -> win/retroarch/<version>/ + win/cores/        (repo_index.py keeps the newest, drops the rest)
+#
+# Monthly (the 3rd, 04:17 UTC) or by hand. A scheduled run builds; it publishes only while the repository
+# variable AB_SITE_REFRESH_PUBLISH is true (the old workflow was switched off - opting back in is a choice).
+# A manual run publishes when its `publish` input is on. Gated by AB_CI_ENABLED.
+name: retroarch
+
+on:
+  schedule:
+    - cron: '17 4 3 * *'
+  workflow_dispatch:
+    inputs:
+      archs:
+        description: architectures (space separated; armhf arm64 i386 win64)
+        type: string
+        default: 'armhf arm64 i386 win64'
+      retroarch:
+        description: build RetroArch (the newest v* tag)
+        type: boolean
+        default: true
+      cores:
+        description: pack the cores tarballs
+        type: boolean
+        default: true
+      publish:
+        description: publish to the download site
+        type: boolean
+        default: false
+
+concurrency:
+  group: retroarch
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: vars.AB_CI_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    outputs:
+      archs: ${{ steps.p.outputs.archs }}
+      retroarch: ${{ steps.p.outputs.retroarch }}
+      cores: ${{ steps.p.outputs.cores }}
+      publish: ${{ steps.p.outputs.publish }}
+    steps:
+      - id: p
+        run: |
+          a="${{ inputs.archs }}"; [ -n "$a" ] || a="armhf arm64 i386 win64"
+          echo "archs=$(printf '%s\n' $a | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = schedule ]; then
+            echo "retroarch=true" >> "$GITHUB_OUTPUT"; echo "cores=true" >> "$GITHUB_OUTPUT"
+            echo "publish=${{ vars.AB_SITE_REFRESH_PUBLISH == 'true' }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "retroarch=${{ inputs.retroarch }}" >> "$GITHUB_OUTPUT"; echo "cores=${{ inputs.cores }}" >> "$GITHUB_OUTPUT"
+            echo "publish=${{ inputs.publish }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  retroarch:
+    if: needs.plan.outputs.retroarch == 'true'
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(needs.plan.outputs.archs) }}
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/autobleem2/autobleem-build:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build RetroArch (${{ matrix.arch }})
+        run: ci/build_retroarch.sh ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: retroarch-${{ matrix.arch }}
+          path: build_retroarch/dist/*
+          retention-days: 14
+
+  cores:
+    if: needs.plan.outputs.cores == 'true'
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(needs.plan.outputs.archs) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free disk space (the i386 set alone is ~800 MB packed)
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+      - name: Pack the cores (${{ matrix.arch }})
+        run: ci/build_cores.sh ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cores-${{ matrix.arch }}
+          path: build_cores/dist/*
+          retention-days: 14
+
+  publish:
+    # always(): publish what was built even when one half was not asked for (its job is then skipped)
+    if: >-
+      always() && needs.plan.outputs.publish == 'true' &&
+      !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    needs: [plan, retroarch, cores]
+    runs-on: [self-hosted, linux, x64]
+    env:
+      AB_REPO_DIR: /home/claude/autobleem-repo
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: autobleem2/autobleem-repo
+          path: autobleem-repo-tools
+      - uses: actions/download-artifact@v8
+        with:
+          path: art
+      - name: Publish to the site
+        run: |
+          set -euo pipefail
+          # repo_publish.sh in a sibling container (a container job cannot nest in this runner), the site
+          # tree bind-mounted at its own path; one call per kind, as repo_publish.sh takes them
+          pub() { docker run --rm -v "$PWD:$PWD" -w "$PWD" -v "$AB_REPO_DIR:$AB_REPO_DIR" -e REPO_DIR="$AB_REPO_DIR" \
+                    ghcr.io/autobleem2/autobleem-build:latest bash autobleem-repo-tools/tools/repo_publish.sh --local "$@"; }
+          shopt -s nullglob
+          for d in art/retroarch-*; do
+            arch="${d#art/retroarch-}"
+            case "$arch" in
+              win64)
+                f=("$d"/retroarch-win64-*.tar.gz); v="${f[0]##*/retroarch-win64-}"; v="${v%.tar.gz}"
+                pub win-retroarch "$v" "${f[@]}" ;;
+              *)
+                f=("$d"/retroarch-v*-"$arch".tar.gz); tag="${f[0]##*/retroarch-}"; tag="${tag%-$arch.tar.gz}"
+                case "$arch" in i386) pub pc-retroarch "$tag" "${f[@]}" ;; *) pub retroarch "$tag" "${f[@]}" ;; esac ;;
+            esac
+          done
+          for d in art/cores-*; do
+            arch="${d#art/cores-}"; f=("$d"/cores-"$arch"-*.tar.gz)
+            case "$arch" in
+              win64) pub win-cores "${f[@]}" ;;
+              i386)  pub pc-cores i386 "${f[@]}" ;;
+              *)     pub cores "$arch" "${f[@]}" ;;
+            esac
+          done

@@ -1,5 +1,6 @@
 # Builds docker/Dockerfile - the autobleem-build image every component's CI compiles in - and publishes it as
-# ghcr.io/autobleem2/autobleem-build:latest and :<short sha>. This repo is the image's one source; the
+# ghcr.io/autobleem2/autobleem-build:latest and :<short sha> - from develop (what every dev build runs in) and
+# from master. This repo is the image's one source; the
 # launcher's old copy of docker/ and its image workflow are retired.
 #
 # Self-hosted for the layer cache: `docker build` runs on the build server's daemon through the mounted
@@ -11,7 +12,7 @@ name: image
 
 on:
   push:
-    branches: [master]
+    branches: [develop, master]
     paths: ['docker/**', '.github/workflows/image.yml']
   pull_request:
     branches: [develop, master]

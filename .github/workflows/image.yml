@@ -1,0 +1,75 @@
+# Builds docker/Dockerfile - the autobleem-build image every component's CI compiles in - and publishes it as
+# ghcr.io/autobleem2/autobleem-build:latest and :<short sha>. This repo is the image's one source; the
+# launcher's old copy of docker/ and its image workflow are retired.
+#
+# Self-hosted only: the cover databases the image bakes in (its db stage) live on the build server, mounted
+# into the runner at AB_COVERS_DIR (docker/runner/compose.yml). `docker build` runs on the host's daemon
+# through the mounted socket, so its layer cache persists - a change late in the Dockerfile rebuilds only the
+# layers after it. Gated by AB_CI_ENABLED.
+name: image
+
+on:
+  push:
+    branches: [master]
+    paths: ['docker/**', '.github/workflows/image.yml']
+  pull_request:
+    branches: [develop, master]
+    paths: ['docker/**', '.github/workflows/image.yml']
+  workflow_dispatch:
+    inputs:
+      no_cache:
+        description: rebuild every layer
+        type: boolean
+        default: false
+      push:
+        description: push to GHCR (off = build and validate only)
+        type: boolean
+        default: true
+
+concurrency:
+  group: image
+  cancel-in-progress: false
+
+jobs:
+  lint:
+    # the scripts and the Dockerfile's syntax, on a hosted runner - a PR from a fork never reaches the server
+    if: vars.AB_CI_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: bash -n every script
+        run: for f in $(git ls-files '*.sh'); do bash -n "$f" || exit 1; done
+      - name: Dockerfile parses
+        run: docker build --check docker/ || docker buildx build --check docker/
+
+  image:
+    # never on a pull request: that would run a fork's Dockerfile on the build server
+    if: vars.AB_CI_ENABLED == 'true' && github.event_name != 'pull_request'
+    needs: lint
+    runs-on: [self-hosted, linux, x64]
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/autobleem-build
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build (every stage validates itself with docker/ab-validate.sh)
+        run: |
+          set -euo pipefail
+          image="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')"
+          args=()
+          [ "${{ inputs.no_cache }}" = "true" ] && args+=(--no-cache)
+          docker/build-image.sh --tag "$image" "${args[@]}"
+      - name: Push
+        if: github.event_name != 'workflow_dispatch' || inputs.push
+        run: |
+          set -euo pipefail
+          image="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$image:latest"
+          docker push "$image:$(git rev-parse --short HEAD)"
+      - name: Summary
+        run: |
+          image="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')"
+          { echo "## autobleem-build"; echo; docker image ls "$image" | head -4 | sed 's/^/    /'; } >> "$GITHUB_STEP_SUMMARY"

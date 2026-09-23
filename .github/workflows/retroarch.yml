@@ -10,11 +10,18 @@
 # Monthly (the 3rd, 04:17 UTC) or by hand. A scheduled run builds; it publishes only while the repository
 # variable AB_SITE_REFRESH_PUBLISH is true (the old workflow was switched off - opting back in is a choice).
 # A manual run publishes when its `publish` input is on. Gated by AB_CI_ENABLED.
+#
+# And daily (04:41 UTC, the same minute autobleem2/retroarch-psc's upstream.yml looks) a new upstream release
+# is caught: when libretro/RetroArch's latest release is newer than the site's rpi/retroarch/latest.json, every
+# architecture is built at that tag, the cores are packed afresh and all of it is published at once - the
+# console's build (retroarch-psc) and these inputs follow the same release together (the owner's ask,
+# 2026-09-23). A day with no new release does nothing.
 name: retroarch
 
 on:
   schedule:
     - cron: '17 4 3 * *'
+    - cron: '41 4 * * *'
   workflow_dispatch:
     inputs:
       archs:
@@ -47,12 +54,24 @@ jobs:
       retroarch: ${{ steps.p.outputs.retroarch }}
       cores: ${{ steps.p.outputs.cores }}
       publish: ${{ steps.p.outputs.publish }}
+      tag: ${{ steps.p.outputs.tag }}
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - id: p
         run: |
           a="${{ inputs.archs }}"; [ -n "$a" ] || a="armhf arm64 i386 win64"
           echo "archs=$(printf '%s\n' $a | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = schedule ]; then
+          if [ "${{ github.event.schedule }}" = '41 4 * * *' ]; then
+            # the daily look for a new upstream release: build + publish everything at it, or do nothing
+            up="$(gh api repos/libretro/RetroArch/releases/latest --jq .tag_name)"
+            site="$(curl -sf https://autobleem.retromenele.pl/rpi/retroarch/latest.json | jq -r '.version // empty' || true)"
+            new=false
+            if [[ "$up" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$up" != "$site" ] && \
+               [ "$(printf '%s\n%s\n' "${site:-v0}" "$up" | sort -V | tail -1)" = "$up" ]; then new=true; fi
+            echo "upstream $up, site ${site:-none}: new release = $new" | tee -a "$GITHUB_STEP_SUMMARY"
+            { echo "retroarch=$new"; echo "cores=$new"; echo "publish=$new"; echo "tag=$([ "$new" = true ] && echo "$up")"; } >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = schedule ]; then
             echo "retroarch=true" >> "$GITHUB_OUTPUT"; echo "cores=true" >> "$GITHUB_OUTPUT"
             echo "publish=${{ vars.AB_SITE_REFRESH_PUBLISH == 'true' }}" >> "$GITHUB_OUTPUT"
           else
@@ -76,7 +95,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Build RetroArch (${{ matrix.arch }})
-        run: ci/build_retroarch.sh ${{ matrix.arch }}
+        run: ci/build_retroarch.sh ${{ matrix.arch }} ${{ needs.plan.outputs.tag }}
       - uses: actions/upload-artifact@v7
         with:
           name: retroarch-${{ matrix.arch }}

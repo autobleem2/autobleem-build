@@ -2,10 +2,11 @@
 # ghcr.io/autobleem2/autobleem-build:latest and :<short sha>. This repo is the image's one source; the
 # launcher's old copy of docker/ and its image workflow are retired.
 #
-# Self-hosted only: the cover databases the image bakes in (its db stage) live on the build server, mounted
-# into the runner at AB_COVERS_DIR (docker/runner/compose.yml). `docker build` runs on the host's daemon
-# through the mounted socket, so its layer cache persists - a change late in the Dockerfile rebuilds only the
-# layers after it. Gated by AB_CI_ENABLED.
+# Self-hosted for the layer cache: `docker build` runs on the build server's daemon through the mounted
+# socket, so a change late in the Dockerfile rebuilds only the layers after it (a cold build is about an
+# hour). The cover databases the image bakes in (its db stage) come from the download repository's db/,
+# checked against their .sha256 and kept in docker/db between runs (docker/build-image.sh). Gated by
+# AB_CI_ENABLED.
 name: image
 
 on:

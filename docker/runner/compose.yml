@@ -29,9 +29,7 @@ services:
       LABELS: linux,x64,psc-build
       RUNNER_WORKDIR: ${RUNNER_WORK}
       ACCESS_TOKEN: ${ACCESS_TOKEN}
-      # docker/build-image.sh takes the cover databases from here (image.yml)
-      AB_COVERS_DIR: /srv/autobleem-covers
+      # (no cover-database mount: docker/build-image.sh fetches them from the download repository's db/)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${RUNNER_WORK}:${RUNNER_WORK}
-      - /AutoBleem/BUILD/data_that_gets_copied/cover_databases:/srv/autobleem-covers:ro

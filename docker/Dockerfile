@@ -411,3 +411,7 @@ ENV AB_PSC_TOOLCHAIN=/opt/psc \
     AB_BUILD_IMAGE_STAGE=all
 WORKDIR /src
 CMD ["/bin/bash"]
+# links the GHCR package to this repository, so the workflow token of the repo that builds it may push it
+LABEL org.opencontainers.image.source="https://github.com/autobleem2/autobleem-build" \
+      org.opencontainers.image.description="The AutoBleem 2 toolchain image: every target's cross compiler, SDL2 builds and the cover databases" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later"

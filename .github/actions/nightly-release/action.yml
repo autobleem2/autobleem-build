@@ -1,0 +1,64 @@
+# The rolling development build of a component: a GitHub pre-release tagged `nightly` on the calling
+# repository, moved to this commit, its assets replaced by the given files. autobleem-appliance's nightly
+# assembly (assemble.yml, channel nightly) fetches every component from these the way it fetches a v* release -
+# release assets are public, so no cross-repository token is needed, which run artifacts would.
+#
+#   - uses: autobleem2/autobleem-build/.github/actions/nightly-release@master
+#     with:
+#       files: out/*.tar.gz
+#       version: ${{ needs.plan.outputs.version }}
+#
+# The job needs `permissions: contents: write`. Call it for a push to develop (or a manual run on develop)
+# only - never for a pull request, never for a v* tag (those have their own release).
+name: nightly-release
+description: Replace the assets of the component's rolling `nightly` pre-release with this build's files
+inputs:
+  files:
+    description: the files to attach (a shell glob, or several, space separated)
+    required: true
+  version:
+    description: the build's version (git describe), shown in the release notes
+    required: false
+    default: ''
+  token:
+    description: a token with contents:write on the repository
+    required: false
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        FILES: ${{ inputs.files }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        repo="$GITHUB_REPOSITORY"; tag=nightly
+        shopt -s nullglob
+        # shellcheck disable=SC2206 - FILES is globs on purpose
+        files=($FILES)
+        [ "${#files[@]}" -gt 0 ] || { echo "nightly-release: no file matches '$FILES'" >&2; exit 1; }
+        # the tag follows the branch: moved when it exists, made when it does not
+        if gh api "repos/$repo/git/ref/tags/$tag" >/dev/null 2>&1; then
+          gh api -X PATCH "repos/$repo/git/refs/tags/$tag" -f sha="$GITHUB_SHA" -F force=true >/dev/null
+        else
+          gh api "repos/$repo/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" >/dev/null
+        fi
+        notes="Development build of ${GITHUB_REF_NAME} - ${VERSION:-$GITHUB_SHA} ($(date -u '+%Y-%m-%d %H:%M UTC')).
+        Replaced by every successful build of ${GITHUB_REF_NAME}; not a release. Run: ${GITHUB_SERVER_URL}/${repo}/actions/runs/${GITHUB_RUN_ID}"
+        id="$(gh api "repos/$repo/releases/tags/$tag" --jq .id 2>/dev/null || true)"
+        if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+          gh release create "$tag" --repo "$repo" --prerelease --title "Development build (nightly)" \
+            --notes "$notes" --verify-tag >/dev/null
+          id="$(gh api "repos/$repo/releases/tags/$tag" --jq .id)"
+        else
+          gh api -X PATCH "repos/$repo/releases/$id" -f body="$notes" -F prerelease=true >/dev/null
+        fi
+        # every old asset goes: the names carry the version, so --clobber alone would leave the last build's
+        # files next to this one's and the assembler would find two of each
+        for aid in $(gh api --paginate "repos/$repo/releases/$id/assets" --jq '.[].id'); do
+          gh api -X DELETE "repos/$repo/releases/assets/$aid"
+        done
+        gh release upload "$tag" --repo "$repo" "${files[@]}" --clobber
+        echo "nightly-release: $repo@$tag = ${VERSION:-$GITHUB_SHA}: ${files[*]##*/}"

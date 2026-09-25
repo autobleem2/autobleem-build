@@ -146,7 +146,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # The sysroot. --variant=extract unpacks the .debs without running maintainer scripts (the target's
 # parent has to exist - mmdebstrap resolves the path before creating it). The package set is what SDL2's
-# backends link against, plus libpng and GLESv1 for pcsx-ab (its gpu_gles plugin is GLES 1 on EGL). Stretch's Release
+# backends link against, plus libpng and GLESv1 for pcsx-ab (its gpu_gles plugin is GLES 1 on EGL), plus libdbus-1-dev
+# for PSC-Bios (BlueZ over D-Bus; every console has libdbus-1.so.3, the stock firmware included). Stretch's Release
 # file has expired and its key was retired, so validity checks are off and the retired key comes from
 # debian-archive-removed-keys.gpg.
 RUN mkdir -p /opt/psc && mmdebstrap \
@@ -157,7 +158,7 @@ RUN mkdir -p /opt/psc && mmdebstrap \
         --aptopt='Acquire::AllowDowngradeToInsecureRepositories "true"' \
         --aptopt='APT::Get::AllowUnauthenticated "true"' \
         --keyring=/usr/share/keyrings/debian-archive-removed-keys.gpg \
-        --include="libasound2-dev,libc6-dev,libgcc-6-dev,libstdc++-6-dev,libgles2-mesa-dev,libgles1-mesa-dev,libogg-dev,libvorbis-dev,libudev-dev,libwayland-dev,libxkbcommon-dev,linux-libc-dev,wayland-protocols,zlib1g-dev,libpng-dev" \
+        --include="libasound2-dev,libc6-dev,libdbus-1-dev,libgcc-6-dev,libstdc++-6-dev,libgles2-mesa-dev,libgles1-mesa-dev,libogg-dev,libvorbis-dev,libudev-dev,libwayland-dev,libxkbcommon-dev,linux-libc-dev,wayland-protocols,zlib1g-dev,libpng-dev" \
         stretch /opt/psc/sysroot \
         "deb http://archive.debian.org/debian stretch main"
 

@@ -10,6 +10,29 @@
 #
 # The job needs `permissions: contents: write`. Call it for a push to develop (or a manual run on develop)
 # only - never for a pull request, never for a v* tag (those have their own release).
+#
+# With `dispatch-token` (2026-09-26) it then tells the assembler: a `component-nightly` repository_dispatch to
+# autobleem-appliance (client_payload {repo, sha, version}), which assembles the nightly at once rather than at
+# the next schedule. The token is the autobleem-admin GitHub App's, minted in the calling job - GITHUB_TOKEN
+# cannot start a workflow in another repository:
+#
+#   - id: app
+#     if: vars.AB_ADMIN_APP_ID != ''
+#     uses: actions/create-github-app-token@v2
+#     with:
+#       app-id: ${{ vars.AB_ADMIN_APP_ID }}
+#       private-key: ${{ secrets.AB_ADMIN_APP_KEY }}
+#       owner: autobleem2
+#       repositories: autobleem-appliance
+#   - uses: autobleem2/autobleem-build/.github/actions/nightly-release@develop
+#     with:
+#       files: out/*.tar.gz
+#       version: ${{ needs.plan.outputs.version }}
+#       dispatch-token: ${{ steps.app.outputs.token }}
+#
+# An empty token (a repository without the App's variable yet) publishes the nightly and says the assembly is
+# left to the schedule. A token that is set but refused fails the step - after the assets are up, so the
+# nightly release is current either way and the red job says the chain is broken.
 name: nightly-release
 description: Replace the assets of the component's rolling `nightly` pre-release with this build's files
 inputs:
@@ -24,6 +47,14 @@ inputs:
     description: a token with contents:write on the repository
     required: false
     default: ${{ github.token }}
+  dispatch-token:
+    description: a token allowed to send a repository_dispatch to dispatch-repo (the admin App's); empty = do not
+    required: false
+    default: ''
+  dispatch-repo:
+    description: the repository whose assembly the new nightly starts
+    required: false
+    default: autobleem2/autobleem-appliance
 runs:
   using: composite
   steps:
@@ -62,3 +93,18 @@ runs:
         done
         gh release upload "$tag" --repo "$repo" "${files[@]}" --clobber
         echo "nightly-release: $repo@$tag = ${VERSION:-$GITHUB_SHA}: ${files[*]##*/}"
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.dispatch-token }}
+        TARGET: ${{ inputs.dispatch-repo }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if [ -z "$GH_TOKEN" ]; then
+          echo "::notice::nightly-release: no dispatch-token - $TARGET assembles this at its next schedule"
+          exit 0
+        fi
+        gh api -X POST "repos/$TARGET/dispatches" -f event_type=component-nightly \
+          -f "client_payload[repo]=$GITHUB_REPOSITORY" -f "client_payload[sha]=$GITHUB_SHA" \
+          -f "client_payload[version]=${VERSION:-$GITHUB_SHA}" >/dev/null
+        echo "nightly-release: asked $TARGET to assemble the nightly"

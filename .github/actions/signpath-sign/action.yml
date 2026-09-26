@@ -1,0 +1,146 @@
+# Authenticode signatures for a component's own Windows programs, through SignPath (SignPath Foundation's
+# free code signing for open-source projects - the certificate is theirs, the publisher Windows shows is
+# "SignPath Foundation"). Without a signature a new build of every one of them was quarantined by Defender as
+# Trojan:Win32/Wacatac.C!ml (2026-09-23) - an ML guess that a signature, plus the reputation it builds, stops.
+#
+# The caller uploads what it staged (a folder, as a zip artifact) earlier in the same run; this signs the
+# files the SignPath project's artifact configuration names (each repository keeps its copy in
+# .signpath/artifact-configuration.xml) and leaves the folder at `path`, signed. Every job leading up to the
+# request must have run on a GitHub-hosted runner (SignPath's origin verification) - never self-hosted.
+#
+#   - uses: autobleem2/autobleem-build/.github/actions/signpath-sign@develop
+#     with:
+#       enabled: ${{ vars.AB_SIGNING_ENABLED == 'true' && github.event_name != 'pull_request' }}
+#       artifact: pc-tools-win64-unsigned
+#       path: stage
+#       api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+#       organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+#       project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+#       signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+#       required: ${{ startsWith(github.ref, 'refs/tags/v') }}
+#
+# The job needs `permissions: actions: read, contents: read`. **Signing is switched off** unless `enabled`
+# is 'true' - each repository's `AB_SIGNING_ENABLED` variable, unset for now (the owner, 2026-09-24): the
+# files then come back as they were uploaded, quietly. Enabled with no organization id or token they come
+# back unsigned with a warning. Every release-signing request
+# waits for a person to approve it in SignPath: `required: true` (a v* tag) fails the job when it is refused
+# or not approved within `timeout` seconds; otherwise (a develop build) the files ship unsigned then.
+name: signpath-sign
+description: Sign this build's own Windows programs through SignPath; fall back to the unsigned files when allowed
+inputs:
+  enabled:
+    description: "'true' signs (the caller's AB_SIGNING_ENABLED switch, off for a pull request); anything else passes the files through"
+    required: false
+    default: 'false'
+  artifact:
+    description: name of the artifact uploaded earlier in this run (the staged folder)
+    required: true
+  path:
+    description: the folder the files land in, signed or not
+    required: true
+  api-token:
+    description: SignPath API token (secrets.SIGNPATH_API_TOKEN); empty = do not sign
+    required: false
+    default: ''
+  organization-id:
+    description: SignPath organization id (vars.SIGNPATH_ORGANIZATION_ID); empty = do not sign
+    required: false
+    default: ''
+  project-slug:
+    description: SignPath project slug; empty = the repository's name
+    required: false
+    default: ''
+  signing-policy-slug:
+    description: SignPath signing policy slug; empty = release-signing
+    required: false
+    default: ''
+  artifact-configuration-slug:
+    description: SignPath artifact configuration slug; empty = the project's default
+    required: false
+    default: ''
+  required:
+    description: "'true' fails when a request is made and does not come back signed (a v* tag)"
+    required: false
+    default: 'false'
+  timeout:
+    description: seconds to wait for the request to be approved and signed
+    required: false
+    default: '3600'
+outputs:
+  signed:
+    description: "'true' when the files at path are signed"
+    value: ${{ steps.result.outputs.signed }}
+runs:
+  using: composite
+  steps:
+    - id: find
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        NAME: ${{ inputs.artifact }}
+        ORG: ${{ inputs.organization-id }}
+        TOKEN: ${{ inputs.api-token }}
+        ENABLED: ${{ inputs.enabled }}
+        PROJECT: ${{ inputs.project-slug }}
+        POLICY: ${{ inputs.signing-policy-slug }}
+      run: |
+        set -euo pipefail
+        # SignPath takes the artifact by id; a matrix job cannot hand its upload's id on reliably, so it is
+        # looked up by name
+        id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$NAME" --jq '.artifacts[0].id // empty')"
+        [ -n "$id" ] || { echo "::error::signpath-sign: no artifact '$NAME' in this run"; exit 1; }
+        echo "id=$id" >> "$GITHUB_OUTPUT"
+        echo "project=${PROJECT:-${GITHUB_REPOSITORY#*/}}" >> "$GITHUB_OUTPUT"
+        echo "policy=${POLICY:-release-signing}" >> "$GITHUB_OUTPUT"
+        if [ "$ENABLED" = true ] && [ -n "$ORG" ] && [ -n "$TOKEN" ]; then
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+        fi
+    - id: sign
+      if: steps.find.outputs.configured == 'true'
+      continue-on-error: ${{ inputs.required != 'true' }}
+      uses: signpath/github-action-submit-signing-request@v3
+      with:
+        api-token: ${{ inputs.api-token }}
+        organization-id: ${{ inputs.organization-id }}
+        project-slug: ${{ steps.find.outputs.project }}
+        signing-policy-slug: ${{ steps.find.outputs.policy }}
+        artifact-configuration-slug: ${{ inputs.artifact-configuration-slug }}
+        github-artifact-id: ${{ steps.find.outputs.id }}
+        wait-for-completion: true
+        wait-for-completion-timeout-in-seconds: ${{ inputs.timeout }}
+        output-artifact-directory: ${{ inputs.path }}
+    # not signed (not set up, a pull request, refused or not approved in time on a develop build): whatever a
+    # failed request left behind goes, and the unsigned files take its place
+    - if: steps.sign.outcome != 'success'
+      shell: bash
+      env:
+        DEST: ${{ inputs.path }}
+      run: rm -rf "$DEST"
+    - if: steps.sign.outcome != 'success'
+      uses: actions/download-artifact@v8
+      with:
+        name: ${{ inputs.artifact }}
+        path: ${{ inputs.path }}
+    - id: result
+      shell: bash
+      env:
+        OUTCOME: ${{ steps.sign.outcome }}
+        CONFIGURED: ${{ steps.find.outputs.configured }}
+        ENABLED: ${{ inputs.enabled }}
+        URL: ${{ steps.sign.outputs.signing-request-web-url }}
+      run: |
+        if [ "$OUTCOME" = success ]; then
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+          echo "signpath-sign: signed ($URL)"
+        elif [ "$ENABLED" != true ]; then
+          echo "signed=false" >> "$GITHUB_OUTPUT"
+          echo "signpath-sign: signing is switched off (AB_SIGNING_ENABLED) - the files pass through unsigned"
+        elif [ "$CONFIGURED" = true ]; then
+          echo "signed=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::signpath-sign: the signing request did not come back signed (${URL:-not created}) - shipping UNSIGNED Windows programs"
+        else
+          echo "signed=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::signpath-sign: SignPath is not set up here (SIGNPATH_ORGANIZATION_ID / SIGNPATH_API_TOKEN) or this is a pull request - shipping UNSIGNED Windows programs"
+        fi

@@ -153,6 +153,24 @@ case "$check" in
 ' ' ')"
         echo "  SDL2 audio backends: $audio"
         [[ " $audio " == *" alsa "* ]] || { echo "FAIL: no alsa backend in libSDL2" >&2; exit 1; }
+        [[ " $audio " != *" oss "* ]] || { echo "FAIL: oss backend in libSDL2 (the console has no OSS)" >&2; exit 1; }
+        # the version: 2.0.14 is the last SDL with a wl_shell window, the only shell the console's Weston has
+        sdlver="$(readlink /opt/psc/sdl2/lib/libSDL2-2.0.so.0)"
+        echo "  SDL2: $sdlver"
+        [[ "$sdlver" == libSDL2-2.0.so.0.1[24].0 ]] || { echo "FAIL: $sdlver - the console needs SDL2 <= 2.0.14 (wl_shell)" >&2; exit 1; }
+        # D-Bus (PSC-Bios talks to BlueZ through libdbus): the sysroot's headers and libdbus-1.so link, and the
+        # result needs nothing newer than the console's glibc
+        cat > "$work/dbus.c" <<'DBUS'
+#include <dbus/dbus.h>
+int main(void) { DBusError e; dbus_error_init(&e); DBusConnection *c = dbus_bus_get(DBUS_BUS_SYSTEM, &e); return c == 0; }
+DBUS
+        /opt/psc/bin/armv8-sony-linux-gnueabihf-gcc -Os -s -o "$work/dbus" "$work/dbus.c" \
+            -I/opt/psc/sysroot/usr/include/dbus-1.0 -I/opt/psc/sysroot/usr/lib/arm-linux-gnueabihf/dbus-1.0/include \
+            -ldbus-1
+        arm-linux-gnueabihf-readelf -d "$work/dbus" | grep -q 'Shared library: \[libdbus-1.so.3\]' \
+            || { echo "FAIL: the D-Bus test program does not link libdbus-1.so.3" >&2; exit 1; }
+        assert_not_newer GLIBC "$(highest arm-linux-gnueabihf-readelf "$work/dbus" GLIBC)" 2.24
+        echo "  D-Bus: links libdbus-1.so.3"
         ;;
 
     *)

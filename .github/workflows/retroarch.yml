@@ -128,7 +128,7 @@ jobs:
       always() && needs.plan.outputs.publish == 'true' &&
       !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     needs: [plan, retroarch, cores]
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, psc-build]
     env:
       AB_REPO_DIR: /home/claude/autobleem-repo
     steps:

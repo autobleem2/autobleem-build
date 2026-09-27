@@ -51,7 +51,7 @@ ARG UPX_VERSION=5.0.2
 RUN cd /tmp && wget -q https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz \
     && tar -xf upx-${UPX_VERSION}-amd64_linux.tar.xz \
     && install -m755 upx-${UPX_VERSION}-amd64_linux/upx /usr/local/bin/upx \
-    && rm -rf upx-${UPX_VERSION}-amd64_linux* && upx --version | head -1
+    && rm -rf upx-${UPX_VERSION}-amd64_linux* && upx --version | sed -n 1p
 # cmake/generate_version.cmake reads the bind-mounted checkout's .git, which belongs to the calling uid
 RUN git config --system --add safe.directory '*'
 
@@ -408,7 +408,7 @@ RUN cd /tmp \
     && ./configure --prefix=/usr/local --disable-nls --disable-fuse2fs >/dev/null \
     && make -j"$(nproc)" >/dev/null && make install >/dev/null \
     && cd /tmp && rm -rf e2fsprogs-${E2FSPROGS_VERSION}* \
-    && /usr/local/sbin/mke2fs -V 2>&1 | head -1
+    && /usr/local/sbin/mke2fs -V 2>&1 | sed -n 1p
 ENV PATH="/usr/local/sbin:${PATH}"
 # llvm-mingw: a UCRT-targeting clang/mingw cross toolchain (github.com/mstorsjo/llvm-mingw), for fast UCRT
 # Windows cross-builds on a Linux runner - the PC tools (and, with UCRT SDL2, the emulators' windows jobs)

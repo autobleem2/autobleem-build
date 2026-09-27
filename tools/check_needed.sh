@@ -20,7 +20,7 @@ status=0
 if [ "$key" = win ]; then
     objdump=x86_64-w64-mingw32-objdump
     # the system DLLs a MinGW program may import, and the launcher's SDL2 family (SDL2, SDL2_image, _mixer, _ttf)
-    allowed='^(kernel32|user32|gdi32|winmm|imm32|ole32|oleaut32|shell32|shlwapi|comctl32|comdlg32|uxtheme|xinput1_[34]|xinput9_1_0|version|setupapi|advapi32|msvcrt|ucrtbase|ws2_32|iphlpapi|cfgmgr32|api-ms-win-.*|sdl2(_image|_mixer|_ttf)?)\.dll$'
+    allowed='^(kernel32|user32|gdi32|winmm|imm32|ole32|oleaut32|shell32|shlwapi|comctl32|comdlg32|uxtheme|xinput1_[34]|xinput9_1_0|version|setupapi|psapi|advapi32|msvcrt|ucrtbase|ws2_32|iphlpapi|cfgmgr32|api-ms-win-.*|sdl2(_image|_mixer|_ttf)?)\.dll$'
     for f in "$stage"/bin/win/*.exe "$libdir"/*.dll; do
         [ -f "$f" ] || continue
         for dll in $("$objdump" -p "$f" | sed -n 's/^\s*DLL Name: //p' | tr -d '\r'); do

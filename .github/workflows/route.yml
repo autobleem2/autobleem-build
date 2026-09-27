@@ -18,6 +18,12 @@
 # been granted that org permission yet), falls back to ubuntu-24.04 with a `::notice::` explaining
 # why, rather than failing the caller's job.
 #
+# The output is named runs_on, not runs-on: a hyphen in a dotted expression (`outputs.runs-on`)
+# parses as subtraction ("outputs.runs" MINUS "on") and GitHub Actions rejects it at workflow-parse
+# time ("Unrecognized named-value: 'needs'") - bracket notation would dodge it too, but callers
+# would have to remember to write `needs.route.outputs['runs-on']` forever; a clean identifier is
+# one less way to get this wrong.
+#
 # Caller usage:
 #   jobs:
 #     route:
@@ -25,7 +31,7 @@
 #       secrets: inherit
 #     build:
 #       needs: route
-#       runs-on: ${{ fromJSON(needs.route.outputs.runs-on) }}
+#       runs-on: ${{ fromJSON(needs.route.outputs.runs_on) }}
 name: route
 
 on:
@@ -35,12 +41,12 @@ on:
         required: true
         description: the autobleem-admin GitHub App's private key (org secret AB_ADMIN_APP_KEY)
     outputs:
-      runs-on:
+      runs_on:
         description: >
           JSON for the caller's runs-on - either an array (["self-hosted","ab-main"] /
           ["self-hosted","psc-build"]) or the bare string "ubuntu-24.04". Consume with
-          `runs-on: ${{ fromJSON(needs.route.outputs.runs-on) }}`.
-        value: ${{ jobs.route.outputs.runs-on }}
+          `runs-on: ${{ fromJSON(needs.route.outputs.runs_on) }}`.
+        value: ${{ jobs.route.outputs.runs_on }}
       runner:
         description: which runner was picked and why, for the caller's own logs
         value: ${{ jobs.route.outputs.runner }}
@@ -50,7 +56,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     outputs:
-      runs-on: ${{ steps.decide.outputs.runs-on }}
+      runs_on: ${{ steps.decide.outputs.runs_on }}
       runner: ${{ steps.decide.outputs.runner }}
     steps:
       # Skipped outright for a pull_request - see the header. No token is minted, no API is called.
@@ -63,7 +69,7 @@ jobs:
           private-key: ${{ secrets.AB_ADMIN_APP_KEY }}
           owner: autobleem2
 
-      - name: Decide runs-on
+      - name: Decide runs_on
         id: decide
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
@@ -73,7 +79,7 @@ jobs:
 
           # 1. pull_request: decided before anything else touches the network or a token.
           if [ "$EVENT_NAME" = "pull_request" ]; then
-            echo 'runs-on="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
+            echo 'runs_on="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
             echo "runner=hosted (pull_request - routed before any API call)" >> "$GITHUB_OUTPUT"
             echo "::notice::pull_request event: routed to ubuntu-24.04 unconditionally, no self-hosted runner is ever offered a PR job"
             exit 0
@@ -81,7 +87,7 @@ jobs:
 
           # 2. no token (App not installed / missing the org permission / bad app-id or key) -> hosted.
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo 'runs-on="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
+            echo 'runs_on="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
             echo "runner=hosted (no App token)" >> "$GITHUB_OUTPUT"
             echo "::notice::could not mint an autobleem-admin App token (check AB_ADMIN_APP_ID/AB_ADMIN_APP_KEY reach this repo, and that the App has 'Self-hosted runners: read') - falling back to ubuntu-24.04"
             exit 0
@@ -97,7 +103,7 @@ jobs:
           body=$(echo "$resp" | sed '$d')
 
           if [ "$code" != "200" ]; then
-            echo 'runs-on="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
+            echo 'runs_on="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
             echo "runner=hosted (API returned $code)" >> "$GITHUB_OUTPUT"
             echo "::notice::GET /orgs/autobleem2/actions/runners returned $code (most likely: the autobleem-admin App is missing the 'Self-hosted runners: read' org permission) - falling back to ubuntu-24.04"
             exit 0
@@ -107,13 +113,13 @@ jobs:
           psc_online=$(echo "$body" | jq -r '[.runners[]? | select(.status=="online") | select(.labels[]?.name=="psc-build")] | length')
 
           if [ "${laptop_online:-0}" -gt 0 ]; then
-            echo 'runs-on=["self-hosted","ab-main"]' >> "$GITHUB_OUTPUT"
+            echo 'runs_on=["self-hosted","ab-main"]' >> "$GITHUB_OUTPUT"
             echo "runner=ab-main (laptop, online)" >> "$GITHUB_OUTPUT"
           elif [ "${psc_online:-0}" -gt 0 ]; then
-            echo 'runs-on=["self-hosted","psc-build"]' >> "$GITHUB_OUTPUT"
+            echo 'runs_on=["self-hosted","psc-build"]' >> "$GITHUB_OUTPUT"
             echo "runner=psc-build (build server, online)" >> "$GITHUB_OUTPUT"
           else
-            echo 'runs-on="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
+            echo 'runs_on="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
             echo "runner=hosted (neither ab-main nor psc-build is online)" >> "$GITHUB_OUTPUT"
             echo "::notice::no self-hosted runner is online (ab-main and psc-build both offline or not yet registered) - falling back to ubuntu-24.04"
           fi

@@ -15,7 +15,14 @@
 #   psc     - the PlayStation Classic toolchain, AutoBleem-NG's recipe: a Debian Stretch armhf sysroot
 #             (glibc 2.24 / libstdc++ 6.0.22 - the console's own), Stretch's gcc-6 cross compiler, and the
 #             SDL2 family built from source against it, wrapped as armv8-sony-linux-gnueabihf-* so
-#             toolchains/psc/PSCtoolchainV8.cmake works with -DAB_PSC_TOOLCHAIN=/opt/psc
+#             toolchains/psc/PSCtoolchainV8.cmake works with -DAB_PSC_TOOLCHAIN=/opt/psc. Also where /opt/ab
+#             (below) lands - every PSC toolchain file needs cmake/FindSDL2.cmake, which is staged here too.
+#   /opt/ab - the shared build helpers (APPS-6), not a stage of its own: /opt/ab/tools/check_psc_binary.sh
+#             and check_needed.sh, /opt/ab/toolchains/psc/PSCtoolchainV8.cmake (the AB_ family) and
+#             PSCtoolchainV8-pcsx.cmake (the PCSXAB_ family, pcsx-abnxt only). One canonical copy each,
+#             COPYed in during the psc stage; a caller's ci/build.sh (running in this image) reads them from
+#             there instead of vendoring its own. The two make_psc.sh scripts that build over ssh on the bare
+#             Sony-toolchain server, with no image present, are the one exception and keep a repo-local copy.
 #   retroarch - the Pi runtime libraries (armhf + arm64 dev packages) ci/build_retroarch.sh cross-builds
 #             RetroArch against, for the download repository
 #   pcusb   - the 32-bit PC USB-stick appliance: Debian's i686-linux-gnu cross compiler + the i386 multiarch
@@ -339,6 +346,19 @@ RUN cd /tmp && \
 # the sysroot view of the SDL prefix (what the repo's FindSDL2.cmake reads)
 RUN ln -s /opt/psc/sdl2/include/SDL2 /opt/psc/sysroot/usr/include/SDL2 && \
     for f in /opt/psc/sdl2/lib/libSDL2*.so*; do ln -s "$f" "/opt/psc/sysroot/usr/lib/$(basename "$f")"; done
+
+# /opt/ab: the shared build helpers every caller used to vendor its own copy of (APPS-6) - check_psc_binary.sh
+# (readelf's -V, the || true fix so a symbol-less binary's empty grep does not trip set -e under `readelf -d`),
+# check_needed.sh (the bundled-library check, an optional third EXTRA_GLOB argument for a port that ships
+# binaries outside its own stage/lib layout, e.g. Amiberry's plugins/*.so*) and the two PSCtoolchainV8.cmake
+# families (AB_ - the launcher, tools, Apps/extensions/processors; PCSXAB_ - pcsx-abnxt only, pcsx-ab is no
+# longer developed). A caller's own ci/build.sh runs in this image and reads these paths directly; only the
+# Sony-toolchain-over-ssh callers (the launcher's and pcsx-abnxt's make_psc.sh, which run on the bare build
+# server, no image there) keep a repo-local fallback copy.
+COPY tools/check_psc_binary.sh tools/check_needed.sh /opt/ab/tools/
+COPY toolchains/psc/PSCtoolchainV8.cmake toolchains/psc/PSCtoolchainV8-pcsx.cmake /opt/ab/toolchains/psc/
+COPY toolchains/psc/cmake/FindSDL2.cmake /opt/ab/toolchains/psc/cmake/
+RUN chmod 755 /opt/ab/tools/check_psc_binary.sh /opt/ab/tools/check_needed.sh
 RUN ab-validate psc
 
 # ---------------------------------------------------------------------------------------------------------

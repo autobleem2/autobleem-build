@@ -42,6 +42,8 @@ Inside the image:
 | | |
 |---|---|
 | `/opt/psc/` | the console toolchain: `bin/armv8-sony-linux-gnueabihf-*`, `sysroot/`, `gcc-6/`, `sdl2/` (`AB_PSC_TOOLCHAIN=/opt/psc`) |
+| `/opt/ab/tools/` | `check_psc_binary.sh`, `check_needed.sh` - the shared build helpers (APPS-6); a caller's `ci/build.sh` reads them from here instead of vendoring its own copy |
+| `/opt/ab/toolchains/psc/` | `PSCtoolchainV8.cmake` (the `AB_` family - launcher, tools, Apps/extensions/processors), `PSCtoolchainV8-pcsx.cmake` (the `PCSXAB_` family - pcsx-abnxt only; pcsx-ab is no longer developed), `cmake/FindSDL2.cmake` |
 | `/opt/mingw-sdl2/` | SDL2 + image/mixer/ttf for x86_64-w64-mingw32: headers, import libs, `.pc` files, DLLs (`AB_MINGW_SDL2`) |
 | `/opt/autobleem/db/` | the cover databases (`AB_COVERS_DB_DIR`) |
 | `arm-linux-gnueabihf-*`, `aarch64-linux-gnu-*` | Debian's Pi cross compilers, SDL2 dev packages under `/usr/lib/<triplet>` |

@@ -55,7 +55,7 @@ jobs:
     # never on a pull request: that would run a fork's Dockerfile on the build server
     if: vars.AB_CI_ENABLED == 'true' && github.event_name != 'pull_request'
     needs: lint
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, psc-build]
     permissions:
       contents: read
       packages: write

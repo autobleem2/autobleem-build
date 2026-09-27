@@ -1,0 +1,178 @@
+# route: picks which runner a caller's job should use, so a repo's build.yml never hard-codes
+# "self-hosted" (or juggles which self-hosted box is actually up). One job, ubuntu-24.04, ~10s.
+#
+# Order of preference:
+#   1. the laptop runner (label ab-main), when it is registered and online
+#   2. the build server (label psc-build), when it is online
+#   3. ubuntu-24.04 (GitHub-hosted), when neither self-hosted runner answers - including every
+#      failure mode below
+#
+# A pull_request event is ALWAYS routed to ubuntu-24.04, decided before the App token is even
+# requested - a PR (this org is public) never touches either self-hosted box, full stop.
+#
+# THE TWO SELF-HOSTED RUNNERS DO NOT SHARE A LABEL SET, so runs-on is built per runner, not from one
+# shared prefix: the build server (psc-build) was registered with the default labels, so it answers
+# to self-hosted,Linux,X64,psc-build and runs-on needs ["self-hosted","psc-build"]. The laptop
+# (bleemmachine) was registered with --no-default-labels, so it answers to ab-main,pcusb-test ONLY -
+# no `self-hosted` label at all - and a runs-on of ["self-hosted","ab-main"] would never match it and
+# queue forever. Its runs-on is the single label ["ab-main"]. The API lookup below matches each
+# runner by its own label name and never assumes `self-hosted` is present on either one.
+#
+# Needs the autobleem-admin GitHub App (org autobleem2) with "Self-hosted runners: read" so it can
+# call GET /orgs/autobleem2/actions/runners; AB_ADMIN_APP_ID (org var) + AB_ADMIN_APP_KEY (org
+# secret), the same pair promote.yml uses. A caller passes the secret with `secrets: inherit` (or
+# explicitly, see below) - vars are visible to a reusable workflow automatically and need nothing
+# passed. Any failure minting the token, or a non-200 from the API (most likely: the App has not
+# been granted that org permission yet), falls back to ubuntu-24.04 with a `::notice::` explaining
+# why, rather than failing the caller's job.
+#
+# The output is named runs_on, not runs-on: a hyphen in a dotted expression (`outputs.runs-on`)
+# parses as subtraction ("outputs.runs" MINUS "on") and GitHub Actions rejects it at workflow-parse
+# time ("Unrecognized named-value: 'needs'") - bracket notation would dodge it too, but callers
+# would have to remember to write `needs.route.outputs['runs-on']` forever; a clean identifier is
+# one less way to get this wrong.
+#
+# force_fallback (workflow_call input, boolean, default false) is a TEST-ONLY knob: when true, skips
+# the App token and the API call entirely and routes straight to ubuntu-24.04, so a caller can prove
+# its fallback path from a workflow_dispatch input without touching either runner. Left in place
+# rather than removed after the first proof, since it is the only way to test the fallback branch on
+# demand once both self-hosted boxes are healthy.
+#
+# Caller usage - note the route_runner shim: a job whose type is `uses: <reusable workflow>`
+# (route, here) cannot have its outputs read by a downstream job's runs-on directly (GitHub
+# rejects it at workflow-parse time, "Unrecognized named-value: 'needs'"); a plain job in between
+# that re-exports the value through its own `outputs:` is the workaround. See ROUTE-report.md.
+#   jobs:
+#     route:
+#       uses: autobleem2/autobleem-build/.github/workflows/route.yml@develop
+#       with:
+#         force_fallback: (true only to test the hosted fallback on demand, otherwise omit)
+#       secrets: inherit
+#     route_runner:
+#       needs: route
+#       runs-on: ubuntu-24.04
+#       outputs:
+#         runs_on: (set from needs.route.outputs.runs_on)
+#       steps: [...]
+#     build:
+#       needs: route_runner
+#       runs-on: (set from fromJSON of needs.route_runner.outputs.runs_on)
+#
+# NOTE ON THIS FILE'S OWN TEXT: never spell out the double-brace expression syntax literally in a
+# comment or a `description:` string below - GitHub's parser scans the whole YAML file for that
+# token and tries to evaluate it wherever it appears, description strings included, which is what
+# broke the very first test run of this workflow (a docstring example, not any working code, was
+# the thing rejected). Describe an expression in prose instead.
+name: route
+
+on:
+  workflow_call:
+    inputs:
+      force_fallback:
+        type: boolean
+        required: false
+        default: false
+        description: test-only - route straight to ubuntu-24.04 without minting a token or calling the API
+    secrets:
+      AB_ADMIN_APP_KEY:
+        required: true
+        description: the autobleem-admin GitHub App's private key (org secret AB_ADMIN_APP_KEY)
+    outputs:
+      runs_on:
+        description: >
+          JSON for the caller's runs-on - either a single-element array (["ab-main"]), a
+          two-element array (["self-hosted","psc-build"]) or the bare string "ubuntu-24.04". Pass
+          it through a plain shim job first (see the header comment), then wrap it in fromJSON for
+          runs-on.
+        value: ${{ jobs.route.outputs.runs_on }}
+      runner:
+        description: which runner was picked and why, for the caller's own logs
+        value: ${{ jobs.route.outputs.runner }}
+
+jobs:
+  route:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      runs_on: ${{ steps.decide.outputs.runs_on }}
+      runner: ${{ steps.decide.outputs.runner }}
+    steps:
+      # Skipped for a pull_request or a forced-fallback test run - see the header. No token is
+      # minted, no API is called, in either case.
+      - id: app
+        if: github.event_name != 'pull_request' && inputs.force_fallback != true
+        continue-on-error: true
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AB_ADMIN_APP_ID }}
+          private-key: ${{ secrets.AB_ADMIN_APP_KEY }}
+          owner: autobleem2
+
+      - name: Decide runs_on
+        id: decide
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          FORCE_FALLBACK: ${{ inputs.force_fallback }}
+        run: |
+          set -uo pipefail
+
+          # 1. pull_request: decided before anything else touches the network or a token.
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo 'runs_on="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
+            echo "runner=hosted (pull_request - routed before any API call)" >> "$GITHUB_OUTPUT"
+            echo "::notice::pull_request event: routed to ubuntu-24.04 unconditionally, no self-hosted runner is ever offered a PR job"
+            exit 0
+          fi
+
+          # 2. force_fallback: a caller's test-only input, also decided before any token/API work.
+          if [ "$FORCE_FALLBACK" = "true" ]; then
+            echo 'runs_on="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
+            echo "runner=hosted (force_fallback input - test only)" >> "$GITHUB_OUTPUT"
+            echo "::notice::force_fallback input is true: routed to ubuntu-24.04 without minting a token or calling the API"
+            exit 0
+          fi
+
+          # 3. no token (App not installed / missing the org permission / bad app-id or key) -> hosted.
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo 'runs_on="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
+            echo "runner=hosted (no App token)" >> "$GITHUB_OUTPUT"
+            echo "::notice::could not mint an autobleem-admin App token (check AB_ADMIN_APP_ID/AB_ADMIN_APP_KEY reach this repo, and that the App has 'Self-hosted runners: read') - falling back to ubuntu-24.04"
+            exit 0
+          fi
+
+          # 4. ask the org which runners exist and whether they are online.
+          resp=$(curl -sS -w '\n%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/orgs/autobleem2/actions/runners")
+          code=$(echo "$resp" | tail -n1)
+          body=$(echo "$resp" | sed '$d')
+
+          if [ "$code" != "200" ]; then
+            echo 'runs_on="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
+            echo "runner=hosted (API returned $code)" >> "$GITHUB_OUTPUT"
+            echo "::notice::GET /orgs/autobleem2/actions/runners returned $code (most likely: the autobleem-admin App is missing the 'Self-hosted runners: read' org permission) - falling back to ubuntu-24.04"
+            exit 0
+          fi
+
+          # Match each runner by its own label name - neither runner's label set can be assumed to
+          # include "self-hosted" (the laptop was registered with --no-default-labels and has none).
+          laptop_online=$(echo "$body" | jq -r '[.runners[]? | select(.status=="online") | select(.labels[]?.name=="ab-main")] | length')
+          psc_online=$(echo "$body" | jq -r '[.runners[]? | select(.status=="online") | select(.labels[]?.name=="psc-build")] | length')
+
+          if [ "${laptop_online:-0}" -gt 0 ]; then
+            # bleemmachine: labels are ab-main,pcusb-test only, no `self-hosted` - runs-on must be
+            # exactly this one label, or the job queues forever waiting for a runner that doesn't exist.
+            echo 'runs_on=["ab-main"]' >> "$GITHUB_OUTPUT"
+            echo "runner=ab-main (laptop, online)" >> "$GITHUB_OUTPUT"
+          elif [ "${psc_online:-0}" -gt 0 ]; then
+            # psc-build: registered with its default labels, so self-hosted is genuinely one of them.
+            echo 'runs_on=["self-hosted","psc-build"]' >> "$GITHUB_OUTPUT"
+            echo "runner=psc-build (build server, online)" >> "$GITHUB_OUTPUT"
+          else
+            echo 'runs_on="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
+            echo "runner=hosted (neither ab-main nor psc-build is online)" >> "$GITHUB_OUTPUT"
+            echo "::notice::no self-hosted runner is online (ab-main and psc-build both offline or not yet registered) - falling back to ubuntu-24.04"
+          fi

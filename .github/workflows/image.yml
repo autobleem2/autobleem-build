@@ -11,6 +11,10 @@
 # hour). The cover databases the image bakes in (its db stage) come from the download repository's db/,
 # checked against their .sha256 and kept in docker/db between runs (docker/build-image.sh). Gated by
 # AB_CI_ENABLED.
+#
+# A real develop push (R17, 2026-09-27) also asks autobleem-main to rebuild every nightly component and
+# reassemble - see `dispatch-nightly-refresh` below - so a toolchain change reaches the nightly on its own
+# instead of waiting for an unrelated component commit.
 name: image
 
 on:
@@ -80,3 +84,48 @@ jobs:
         run: |
           image="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')"
           { echo "## autobleem-build"; echo; docker image ls "$image" | head -4 | sed 's/^/    /'; } >> "$GITHUB_STEP_SUMMARY"
+
+  dispatch-nightly-refresh:
+    # A develop image push changes what every component's CI compiles in, but nothing else reacts to it on
+    # its own (R17, 2026-09-27): a component's own develop build only starts for its own source changes, and
+    # the manual "nightly refresh" (autobleem-main's nightly.yml / tools/release.py nightly) by default
+    # rebuilds only the components whose develop moved past their rolling `nightly` release - an image-only
+    # change moves none of them either. So ask autobleem-main to run its existing nightly.yml with
+    # rebuild_all=true: that already knows how to force every NIGHTLY_REPOS component to rebuild (against
+    # the new image - none of them pin it by digest, so a re-run alone picks it up) and then reassemble the
+    # appliance's nightly (release.py's --all path, which always assembles). Deliberately not a copy of the
+    # component list here: release.py's NIGHTLY_REPOS/WORKFLOWS stay the one place it lives, and this job
+    # only ever starts that one existing, already-tested workflow.
+    #
+    # Never for master (its image is :latest, waited on directly by release.py's promote() - R2, a v* tag's
+    # own build) and never for a pull request or a validate-only workflow_dispatch (push=false) - only an
+    # actual :develop push actually reaches GHCR. AB_ADMIN_APP_ID unset (the owner has not wired the App
+    # into this repository yet) is a quiet no-op, same as the nightly-release action's empty dispatch-token -
+    # the fallback is running autobleem-main's `nightly` workflow (rebuild_all) by hand, or the admin panel's
+    # "Refresh nightly" button once it offers that option.
+    needs: [lint, image]
+    if: >-
+      always() && needs.image.result == 'success' && github.ref == 'refs/heads/develop' &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push))
+    runs-on: ubuntu-24.04
+    steps:
+      - id: app
+        if: vars.AB_ADMIN_APP_ID != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AB_ADMIN_APP_ID }}
+          private-key: ${{ secrets.AB_ADMIN_APP_KEY }}
+          owner: autobleem2
+          repositories: autobleem-main
+      - name: Ask autobleem-main to rebuild every nightly component and reassemble
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::notice::dispatch-nightly-refresh: no AB_ADMIN_APP_ID/AB_ADMIN_APP_KEY here yet - run autobleem-main's nightly.yml with rebuild_all by hand (or the admin panel's Refresh nightly)"
+            exit 0
+          fi
+          gh api -X POST repos/autobleem2/autobleem-main/actions/workflows/nightly.yml/dispatches \
+            -f ref=develop -f "inputs[rebuild_all]=true" >/dev/null
+          echo "dispatch-nightly-refresh: asked autobleem-main to rebuild every nightly component against the new image"

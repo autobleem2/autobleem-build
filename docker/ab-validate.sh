@@ -75,7 +75,7 @@ case "$check" in
             $(pkg-config --cflags --libs sdl2 SDL2_image SDL2_mixer SDL2_ttf) -pthread
         "$work/native"
         clang-format --version
-        clang-tidy --version | head -2
+        clang-tidy --version | sed -n '1,2p'
         ;;
 
     pi)
@@ -87,8 +87,8 @@ case "$check" in
             -o "$work/arm64" "$work/test.cpp" -lSDL2 -lSDL2_image -lSDL2_mixer -lSDL2_ttf -pthread
         file "$work/arm64" | grep -q 'ELF 64-bit LSB.*ARM aarch64' || { file "$work/arm64"; exit 1; }
         assert_not_newer GLIBC "$(highest aarch64-linux-gnu-readelf "$work/arm64" GLIBC)" 2.36
-        echo "  armhf: $(arm-linux-gnueabihf-g++ --version | head -1)"
-        echo "  arm64: $(aarch64-linux-gnu-g++ --version | head -1)"
+        echo "  armhf: $(arm-linux-gnueabihf-g++ --version | sed -n 1p)"
+        echo "  arm64: $(aarch64-linux-gnu-g++ --version | sed -n 1p)"
         ;;
 
     pcusb)
@@ -97,7 +97,7 @@ case "$check" in
         file "$work/i386" | grep -q 'ELF 32-bit LSB.*Intel 80386' || { file "$work/i386"; exit 1; }
         assert_not_newer GLIBC "$(highest i686-linux-gnu-readelf "$work/i386" GLIBC)" 2.36
         SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy "$work/i386"
-        echo "  i386: $(i686-linux-gnu-g++ --version | head -1)"
+        echo "  i386: $(i686-linux-gnu-g++ --version | sed -n 1p)"
         ;;
 
     mingw)
@@ -107,13 +107,13 @@ case "$check" in
         file "$work/win.exe" | grep -q 'PE32+ executable.*x86-64' || { file "$work/win.exe"; exit 1; }
         ls /opt/mingw-sdl2/bin/SDL2.dll /opt/mingw-sdl2/bin/SDL2_image.dll /opt/mingw-sdl2/bin/SDL2_mixer.dll \
            /opt/mingw-sdl2/bin/SDL2_ttf.dll >/dev/null
-        echo "  $(x86_64-w64-mingw32-g++-posix --version | head -1)"
+        echo "  $(x86_64-w64-mingw32-g++-posix --version | sed -n 1p)"
         ;;
 
     psc-compiler)
         libc=/opt/psc/sysroot/lib/arm-linux-gnueabihf/libc.so.6
         grep -aqE 'GNU C Library .* version 2\.24' "$libc" || { echo "FAIL: the sysroot's libc is not 2.24" >&2; exit 1; }
-        /opt/psc/bin/armv8-sony-linux-gnueabihf-g++ --version | head -1
+        /opt/psc/bin/armv8-sony-linux-gnueabihf-g++ --version | sed -n 1p
         /opt/psc/bin/armv8-sony-linux-gnueabihf-g++ -std=c++14 -march=armv8-a -mfpu=neon-vfpv4 -mfloat-abi=hard -Os -s \
             -o "$work/plain" "$work/plain.cpp" -pthread -Wl,--verbose 2>&1 | grep -E '^(attempt to open|opened script)' \
             | grep -E 'libc\.so|libstdc\+\+|crt1' | head -8 | sed 's/^/  /' || true

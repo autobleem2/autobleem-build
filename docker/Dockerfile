@@ -355,9 +355,11 @@ RUN ln -s /opt/psc/sdl2/include/SDL2 /opt/psc/sysroot/usr/include/SDL2 && \
 # longer developed). A caller's own ci/build.sh runs in this image and reads these paths directly; only the
 # Sony-toolchain-over-ssh callers (the launcher's and pcsx-abnxt's make_psc.sh, which run on the bare build
 # server, no image there) keep a repo-local fallback copy.
-COPY tools/check_psc_binary.sh tools/check_needed.sh /opt/ab/tools/
-COPY toolchains/psc/PSCtoolchainV8.cmake toolchains/psc/PSCtoolchainV8-pcsx.cmake /opt/ab/toolchains/psc/
-COPY toolchains/psc/cmake/FindSDL2.cmake /opt/ab/toolchains/psc/cmake/
+# staged by build-image.sh into ab-src/ (git-ignored, the build context is docker/, not the repo root -
+# the same reason the cover databases are staged into docker/db/)
+COPY ab-src/tools/check_psc_binary.sh ab-src/tools/check_needed.sh /opt/ab/tools/
+COPY ab-src/toolchains/psc/PSCtoolchainV8.cmake ab-src/toolchains/psc/PSCtoolchainV8-pcsx.cmake /opt/ab/toolchains/psc/
+COPY ab-src/toolchains/psc/cmake/FindSDL2.cmake /opt/ab/toolchains/psc/cmake/
 RUN chmod 755 /opt/ab/tools/check_psc_binary.sh /opt/ab/tools/check_needed.sh
 RUN ab-validate psc
 

@@ -25,6 +25,10 @@ cover_databases/`.
 Versions (SDL2, mingw SDL2, LLVM, the Debian release) are `ARG`s at the top of each stage in the
 `Dockerfile`; pass `--build-arg NAME=value` to override one.
 
+The build context is this directory, not the repo root - `build-image.sh` also stages the repo's
+`tools/check_psc_binary.sh`/`check_needed.sh` and `toolchains/psc/` (the shared build helpers baked into
+the image at `/opt/ab`, APPS-6) into `docker/ab-src/` (git-ignored) the same way, on every run.
+
 ## Using it
 
 ```bash

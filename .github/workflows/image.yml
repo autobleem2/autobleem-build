@@ -17,13 +17,18 @@
 # instead of waiting for an unrelated component commit.
 name: image
 
+# The paths list below has to match docker/build-image.sh's own staging list (the "mkdir -p ab-src/..." /
+# "cp ../tools/... ../toolchains/..." lines just above its "docker build") - those are the shared build
+# helpers (APPS-6) COPYed into the image from outside docker/, so a change to them needs to trigger this
+# workflow the same way a Dockerfile change does. If that staging list grows, add the new source path here
+# too.
 on:
   push:
     branches: [develop, master]
-    paths: ['docker/**', '.github/workflows/image.yml']
+    paths: ['docker/**', '.github/workflows/image.yml', 'tools/check_psc_binary.sh', 'tools/check_needed.sh', 'toolchains/psc/**']
   pull_request:
     branches: [develop, master]
-    paths: ['docker/**', '.github/workflows/image.yml']
+    paths: ['docker/**', '.github/workflows/image.yml', 'tools/check_psc_binary.sh', 'tools/check_needed.sh', 'toolchains/psc/**']
   workflow_dispatch:
     inputs:
       no_cache:

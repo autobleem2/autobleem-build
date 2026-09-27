@@ -11,7 +11,9 @@
 #                               i386 ELF for a plain i686 (no SSE2), and is run - i386 runs on the host
 #   ab-validate psc-compiler    the Stretch gcc-6 cross compiler links a C++ program against its sysroot
 #   ab-validate psc             ...and against the SDL2 family built into /opt/psc/sdl2; the binary is
-#                               ARMv8, needs nothing above GLIBC_2.24 / GLIBCXX_3.4.22, has no RPATH
+#                               ARMv8, needs nothing above GLIBC_2.24 / GLIBCXX_3.4.22, has no RPATH; also
+#                               checks /opt/ab (APPS-6) - the shared tools/toolchain files exist and the
+#                               scripts are executable
 #
 # A binary built for the console is checked the same way at build time by tools/check_psc_binary.sh.
 set -euo pipefail
@@ -171,6 +173,16 @@ DBUS
             || { echo "FAIL: the D-Bus test program does not link libdbus-1.so.3" >&2; exit 1; }
         assert_not_newer GLIBC "$(highest arm-linux-gnueabihf-readelf "$work/dbus" GLIBC)" 2.24
         echo "  D-Bus: links libdbus-1.so.3"
+        # /opt/ab (APPS-6): the shared build helpers every caller used to vendor its own copy of
+        for f in /opt/ab/tools/check_psc_binary.sh /opt/ab/tools/check_needed.sh; do
+            [ -f "$f" ] || { echo "FAIL: $f missing" >&2; exit 1; }
+            [ -x "$f" ] || { echo "FAIL: $f is not executable" >&2; exit 1; }
+        done
+        for f in /opt/ab/toolchains/psc/PSCtoolchainV8.cmake /opt/ab/toolchains/psc/PSCtoolchainV8-pcsx.cmake \
+                 /opt/ab/toolchains/psc/cmake/FindSDL2.cmake; do
+            [ -f "$f" ] || { echo "FAIL: $f missing" >&2; exit 1; }
+        done
+        echo "  /opt/ab: check_psc_binary.sh, check_needed.sh, PSCtoolchainV8.cmake, PSCtoolchainV8-pcsx.cmake ok"
         ;;
 
     *)

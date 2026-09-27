@@ -24,14 +24,29 @@
 # would have to remember to write `needs.route.outputs['runs-on']` forever; a clean identifier is
 # one less way to get this wrong.
 #
-# Caller usage:
+# Caller usage - note the route_runner shim: a job whose type is `uses: <reusable workflow>`
+# (route, here) cannot have its outputs read by a downstream job's runs-on directly (GitHub
+# rejects it at workflow-parse time, "Unrecognized named-value: 'needs'"); a plain job in between
+# that re-exports the value through its own `outputs:` is the workaround. See ROUTE-report.md.
 #   jobs:
 #     route:
 #       uses: autobleem2/autobleem-build/.github/workflows/route.yml@develop
 #       secrets: inherit
-#     build:
+#     route_runner:
 #       needs: route
-#       runs-on: ${{ fromJSON(needs.route.outputs.runs_on) }}
+#       runs-on: ubuntu-24.04
+#       outputs:
+#         runs_on: (set from needs.route.outputs.runs_on)
+#       steps: [...]
+#     build:
+#       needs: route_runner
+#       runs-on: (set from fromJSON of needs.route_runner.outputs.runs_on)
+#
+# NOTE ON THIS FILE'S OWN TEXT: never spell out the double-brace expression syntax literally in a
+# comment or a `description:` string below - GitHub's parser scans the whole YAML file for that
+# token and tries to evaluate it wherever it appears, description strings included, which is what
+# broke the very first test run of this workflow (a docstring example, not any working code, was
+# the thing rejected). Describe an expression in prose instead.
 name: route
 
 on:
@@ -44,8 +59,8 @@ on:
       runs_on:
         description: >
           JSON for the caller's runs-on - either an array (["self-hosted","ab-main"] /
-          ["self-hosted","psc-build"]) or the bare string "ubuntu-24.04". Consume with
-          `runs-on: ${{ fromJSON(needs.route.outputs.runs_on) }}`.
+          ["self-hosted","psc-build"]) or the bare string "ubuntu-24.04". Pass it through a
+          plain shim job first (see the header comment), then wrap it in fromJSON for runs-on.
         value: ${{ jobs.route.outputs.runs_on }}
       runner:
         description: which runner was picked and why, for the caller's own logs

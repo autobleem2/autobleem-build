@@ -18,6 +18,10 @@
 # The build context is this directory (docker/), not the repo root, so anything the Dockerfile COPYs that
 # lives above it (the shared build helpers at /opt/ab - APPS-6) has to be staged in first, the same way the
 # cover databases are: docker/ab-src/ (git-ignored), refreshed on every run.
+#
+# This staging list is the one source for what those helpers are - .github/workflows/image.yml's push/
+# pull_request `paths:` lists a change to any of them has to match it, so a helper-only change still
+# triggers a rebuild (that workflow file says so too; keep both in step if this list grows).
 set -euo pipefail
 cd "$(dirname "$0")"
 

@@ -23,7 +23,9 @@ stages them into `docker/db/` (git-ignored) from `--covers DIR` / `$AB_COVERS_DI
 cover_databases/`.
 
 Versions (SDL2, mingw SDL2, LLVM, the Debian release) are `ARG`s at the top of each stage in the
-`Dockerfile`; pass `--build-arg NAME=value` to override one.
+`Dockerfile`; pass `--build-arg NAME=value` to override one. The console's SDL2 is AutoBleem's own
+(`github.com/autobleem2/autobleem_sdl`: SDL 2.0.18 with its patches), pinned by commit in
+`AUTOBLEEM_SDL_REF` and built with that repository's `ci/build.sh`.
 
 The build context is this directory, not the repo root - `build-image.sh` also stages the repo's
 `tools/check_psc_binary.sh`/`check_needed.sh` and `toolchains/psc/` (the shared build helpers baked into

@@ -156,10 +156,14 @@ case "$check" in
         echo "  SDL2 audio backends: $audio"
         [[ " $audio " == *" alsa "* ]] || { echo "FAIL: no alsa backend in libSDL2" >&2; exit 1; }
         [[ " $audio " != *" oss "* ]] || { echo "FAIL: oss backend in libSDL2 (the console has no OSS)" >&2; exit 1; }
-        # the version: 2.0.14 is the last SDL with a wl_shell window, the only shell the console's Weston has
+        # the version: autobleem_sdl's 2.0.18 (2.0.20+ needs libwayland >= 1.18, the console has 1.12), and
+        # its wl_shell window - the only shell the console's Weston 1.11 has, which SDL dropped in 2.0.16
         sdlver="$(readlink /opt/psc/sdl2/lib/libSDL2-2.0.so.0)"
         echo "  SDL2: $sdlver"
-        [[ "$sdlver" == libSDL2-2.0.so.0.1[24].0 ]] || { echo "FAIL: $sdlver - the console needs SDL2 <= 2.0.14 (wl_shell)" >&2; exit 1; }
+        [[ "$sdlver" == libSDL2-2.0.so.0.18.0 ]] || { echo "FAIL: $sdlver - the console's SDL2 is autobleem_sdl's 2.0.18" >&2; exit 1; }
+        wlshell="$(strings -a /opt/psc/sdl2/lib/libSDL2-2.0.so.0 | grep -c wl_shell || true)"
+        echo "  SDL2 wl_shell strings: $wlshell"
+        [ "$wlshell" -gt 0 ] || { echo "FAIL: no wl_shell in libSDL2 - autobleem_sdl's patch 0001 missing" >&2; exit 1; }
         # D-Bus (PSC-Bios talks to BlueZ through libdbus): the sysroot's headers and libdbus-1.so link, and the
         # result needs nothing newer than the console's glibc
         cat > "$work/dbus.c" <<'DBUS'

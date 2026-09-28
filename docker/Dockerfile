@@ -134,13 +134,15 @@ COPY db/coversJ.db db/coversP.db db/coversU.db /opt/autobleem/db/
 #              libstdc++ 6.0.22, plus the -dev packages SDL2 and pcsx-ab need
 #   gcc-6/     Stretch's amd64 gcc-6/g++-6 cross packages, extracted; the newest GCC whose libstdc++ ABI
 #              matches that glibc (Bookworm's arm-linux-gnueabihf gcc would need glibc 2.34+ on the console)
-#   sdl2/      SDL2 2.0.14 + image 2.6.3 + mixer 2.6.3 + ttf 2.20.2 built here against the sysroot - the
-#              versions and backends of the console's libs.tar.gz; what a release ships in it. 2.0.14 is the
-#              ceiling: the last SDL with a wl_shell window (2.0.16 dropped it and zxdg_shell_v6), and the
-#              console's Weston 1.11 has no xdg_wm_base; 2.0.20+ also wants libwayland >= 1.18 (the console: 1.12)
+#   sdl2/      AutoBleem's SDL2 2.0.18 (github.com/autobleem2/autobleem_sdl) + image 2.6.3 + mixer 2.6.3 +
+#              ttf 2.20.2 built here against the sysroot - the versions and backends of the console's
+#              libs.tar.gz; what a release ships in it. 2.0.18 is the ceiling: 2.0.20+ wants libwayland >= 1.18
+#              (the console: 1.12), and 2.0.16 dropped the wl_shell window the console's Weston 1.11 needs (it
+#              has no xdg_wm_base) - autobleem_sdl's patch 0001 restores it
 #   bin/       armv8-sony-linux-gnueabihf-{gcc,g++,cpp} wrappers adding --sysroot, the binutils as links
 FROM db AS psc
-ARG SDL2_VERSION=2.0.14
+# autobleem_sdl's commit (SDL 2.0.18 + its patches/); a new SDL for the console = a new commit there, then here
+ARG AUTOBLEEM_SDL_REF=db65aac9f981f5d77a4ea05c3c9d64e6fd38ddfa
 ARG SDL2_IMAGE_VERSION=2.6.3
 ARG SDL2_MIXER_VERSION=2.6.3
 ARG SDL2_TTF_VERSION=2.20.2
@@ -290,32 +292,25 @@ RUN printf '%s\n' \
     'set(ENV{PKG_CONFIG_SYSROOT_DIR} "/opt/psc/sysroot")' \
     > /opt/psc/toolchain.cmake
 
-# SDL2 - the console's libSDL2 (2.0.12 until 2026-09-23, 2.0.14 since - verified on a console): autotools (a
-# CMake-built 2.0.12 left the console at a black screen in NG's testing), Wayland (shared) + dummy video,
-# GLES 1/2 through EGL, ALSA (shared) + disk + dummy audio, udev hot-plug; no X11, KMSDRM, RPi, Vulkan, OSS
-# (the console has none), PulseAudio, JACK, sndio, DBus, IBus. The tarball from libsdl.org/release: GitHub
-# has release assets from 2.0.20 on only.
+# SDL2 - the console's libSDL2 (2.0.12 until 2026-09-23, 2.0.14 until 2026-09-29, AutoBleem's patched 2.0.18
+# since): autobleem_sdl at AUTOBLEEM_SDL_REF - SDL's release-2.0.18 as a submodule plus its patches/ (the
+# wl_shell window, two GLES2 renderer fixes) - built by that repository's own ci/build.sh, which holds the
+# configure line (autotools - a CMake-built 2.0.12 left the console at a black screen in NG's testing):
+# Wayland (shared) + dummy video, GLES 1/2 through EGL, ALSA (shared) + disk + dummy audio, udev hot-plug; no
+# X11, KMSDRM, RPi, Vulkan, OSS (the console has none), PulseAudio, JACK, sndio, PipeWire, libdecor, DBus,
+# IBus; no Wayland library of our own (the console's libwayland 1.12 is loaded at run time). It checks the
+# result (2.0.18, ARM hard-float, wl_shell in it, Wayland/ALSA dynamic, no X11/OSS). Fetched by commit, only
+# that commit and the submodule's pinned one, no history.
 # The SDL family installs to its own prefix so its .pc/.cmake files hold real paths; the sysroot gets
 # links to it so a build that only knows the sysroot (toolchains/psc/cmake/FindSDL2.cmake) sees
 # usr/lib/libSDL2.so and usr/include/SDL2 there.
-RUN cd /tmp && \
-    wget -q https://www.libsdl.org/release/SDL2-${SDL2_VERSION}.tar.gz && \
-    tar -xzf SDL2-${SDL2_VERSION}.tar.gz && cd SDL2-${SDL2_VERSION} && \
-    PKG_CONFIG_LIBDIR=/opt/psc/sysroot/usr/lib/arm-linux-gnueabihf/pkgconfig:/opt/psc/sysroot/usr/share/pkgconfig \
-    PKG_CONFIG_SYSROOT_DIR=/opt/psc/sysroot \
-    CC=/opt/psc/bin/armv8-sony-linux-gnueabihf-gcc CXX=/opt/psc/bin/armv8-sony-linux-gnueabihf-g++ \
-    CFLAGS="${PSC_CFLAGS}" \
-    ./configure --host=arm-linux-gnueabihf --prefix=/opt/psc/sdl2 \
-        --enable-shared --enable-static \
-        --disable-video-x11 --enable-video-wayland --enable-wayland-shared --disable-video-wayland-qt-touch \
-        --disable-video-kmsdrm --disable-video-rpi --disable-video-vivante --disable-video-vulkan \
-        --enable-video-opengl --enable-video-opengles --enable-video-opengles1 --enable-video-opengles2 \
-        --enable-alsa --enable-alsa-shared --disable-oss --disable-pulseaudio --disable-jack --disable-sndio \
-        --enable-libudev --enable-diskaudio --enable-dummyaudio --enable-video-dummy \
-        --disable-dbus --disable-ibus --disable-rpath && \
-    make -j"$(nproc)" && make install && \
+RUN git init -q /tmp/autobleem_sdl && cd /tmp/autobleem_sdl && \
+    git fetch -q --depth 1 https://github.com/autobleem2/autobleem_sdl.git "${AUTOBLEEM_SDL_REF}" && \
+    git checkout -q FETCH_HEAD && \
+    git submodule update -q --init --depth 1 && \
+    AB_SDL_PREFIX=/opt/psc/sdl2 AB_PSC_TOOLCHAIN=/opt/psc ci/build.sh psc && \
     test -f /opt/psc/sdl2/lib/libSDL2.so && \
-    cd /tmp && rm -rf SDL2-${SDL2_VERSION}*
+    cd /tmp && rm -rf /tmp/autobleem_sdl
 
 # SDL2_image - vendored PNG + JPG only. SDL2_mixer - the backends of the console's libSDL2_mixer-2.0.so.0:
 # WAV, OGG through the sysroot's libvorbisfile (a NEEDED library, not dlopen'ed), the native MIDI parser;

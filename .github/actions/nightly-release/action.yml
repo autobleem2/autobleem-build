@@ -33,9 +33,17 @@
 # An empty token (a repository without the App's variable yet) publishes the nightly and says the assembly is
 # left to the schedule. A token that is set but refused fails the step - after the assets are up, so the
 # nightly release is current either way and the red job says the chain is broken.
+#
+# A preview build (2026-10-01) is the same rolling release under another tag: `tag: preview` on a manual run of
+# a feature branch. It never touches the `nightly` release and never sends component-nightly - the preview's
+# own assembly is started by autobleem-main's preview workflow once every component of the branch is built.
 name: nightly-release
-description: Replace the assets of the component's rolling `nightly` pre-release with this build's files
+description: Replace the assets of the component's rolling `nightly` (or `preview`) pre-release with this build's files
 inputs:
+  tag:
+    description: the rolling release to replace - nightly (develop) or preview (a feature branch, manual run)
+    required: false
+    default: nightly
   files:
     description: the files to attach (a shell glob, or several, space separated)
     required: true
@@ -63,9 +71,11 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         FILES: ${{ inputs.files }}
         VERSION: ${{ inputs.version }}
+        TAG: ${{ inputs.tag }}
       run: |
         set -euo pipefail
-        repo="$GITHUB_REPOSITORY"; tag=nightly
+        repo="$GITHUB_REPOSITORY"; tag="$TAG"
+        case "$tag" in nightly|preview) ;; *) echo "nightly-release: tag must be nightly or preview, not '$tag'" >&2; exit 1 ;; esac
         shopt -s nullglob
         # shellcheck disable=SC2206 - FILES is globs on purpose
         files=($FILES)
@@ -80,7 +90,7 @@ runs:
         Replaced by every successful build of ${GITHUB_REF_NAME}; not a release. Run: ${GITHUB_SERVER_URL}/${repo}/actions/runs/${GITHUB_RUN_ID}"
         id="$(gh api "repos/$repo/releases/tags/$tag" --jq .id 2>/dev/null || true)"
         if ! [[ "$id" =~ ^[0-9]+$ ]]; then
-          gh release create "$tag" --repo "$repo" --prerelease --title "Development build (nightly)" \
+          gh release create "$tag" --repo "$repo" --prerelease --title "Development build ($tag)" \
             --notes "$notes" --verify-tag >/dev/null
           id="$(gh api "repos/$repo/releases/tags/$tag" --jq .id)"
         else
@@ -98,8 +108,13 @@ runs:
         GH_TOKEN: ${{ inputs.dispatch-token }}
         TARGET: ${{ inputs.dispatch-repo }}
         VERSION: ${{ inputs.version }}
+        TAG: ${{ inputs.tag }}
       run: |
         set -euo pipefail
+        if [ "$TAG" != nightly ]; then
+          echo "nightly-release: $TAG build - no component-nightly dispatch"
+          exit 0
+        fi
         if [ -z "$GH_TOKEN" ]; then
           echo "::notice::nightly-release: no dispatch-token - $TARGET assembles this at its next schedule"
           exit 0

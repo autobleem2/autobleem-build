@@ -23,7 +23,13 @@ stages them into `docker/db/` (git-ignored) from `--covers DIR` / `$AB_COVERS_DI
 cover_databases/`.
 
 Versions (SDL2, mingw SDL2, LLVM, the Debian release) are `ARG`s at the top of each stage in the
-`Dockerfile`; pass `--build-arg NAME=value` to override one.
+`Dockerfile`; pass `--build-arg NAME=value` to override one. The console's SDL2 is AutoBleem's own
+(`github.com/autobleem2/autobleem_sdl`: SDL 2.0.18 with its patches), pinned by commit in
+`AUTOBLEEM_SDL_REF` and built with that repository's `ci/build.sh`.
+
+The build context is this directory, not the repo root - `build-image.sh` also stages the repo's
+`tools/check_psc_binary.sh`/`check_needed.sh` and `toolchains/psc/` (the shared build helpers baked into
+the image at `/opt/ab`, APPS-6) into `docker/ab-src/` (git-ignored) the same way, on every run.
 
 ## Using it
 
@@ -42,6 +48,8 @@ Inside the image:
 | | |
 |---|---|
 | `/opt/psc/` | the console toolchain: `bin/armv8-sony-linux-gnueabihf-*`, `sysroot/`, `gcc-6/`, `sdl2/` (`AB_PSC_TOOLCHAIN=/opt/psc`) |
+| `/opt/ab/tools/` | `check_psc_binary.sh`, `check_needed.sh` - the shared build helpers (APPS-6); a caller's `ci/build.sh` reads them from here instead of vendoring its own copy |
+| `/opt/ab/toolchains/psc/` | `PSCtoolchainV8.cmake` (the `AB_` family - launcher, tools, Apps/extensions/processors), `PSCtoolchainV8-pcsx.cmake` (the `PCSXAB_` family - pcsx-abnxt only; pcsx-ab is no longer developed), `cmake/FindSDL2.cmake` |
 | `/opt/mingw-sdl2/` | SDL2 + image/mixer/ttf for x86_64-w64-mingw32: headers, import libs, `.pc` files, DLLs (`AB_MINGW_SDL2`) |
 | `/opt/autobleem/db/` | the cover databases (`AB_COVERS_DB_DIR`) |
 | `arm-linux-gnueabihf-*`, `aarch64-linux-gnu-*` | Debian's Pi cross compilers, SDL2 dev packages under `/usr/lib/<triplet>` |

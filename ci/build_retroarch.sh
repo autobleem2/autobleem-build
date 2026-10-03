@@ -138,7 +138,7 @@ build_one() {
     # system, /usr/lib/... for the rest - so both are asked; libc6/libgcc/libstdc++ are always there)
     "$triplet-objdump" -p "$stage/usr/local/bin/retroarch" | awk '/NEEDED/ {print $2}' | while read -r so; do
         { dpkg -S "/usr/lib/$multiarch/$so" 2>/dev/null || dpkg -S "/lib/$multiarch/$so" 2>/dev/null || true; } \
-            | head -1 | sed 's/:.*//'
+            | sed -n '1{s/:.*//;p}'
     done | grep -vE '^(libc6|libgcc-s1|libstdc\+\+6|)$' | sort -u > "$meta/retroarch.depends"
     [ -s "$meta/retroarch.depends" ] || { echo "no dependencies found for $arch - something is off" >&2; exit 1; }
     cat "$meta/retroarch.depends"

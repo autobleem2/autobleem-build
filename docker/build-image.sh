@@ -14,8 +14,21 @@
 # docker/db/ (git-ignored) from the first of --covers, $AB_COVERS_DIR, the checkout's db/ and the build
 # server's old copy that holds the real files (not tools/make_usb.py's 5 KB stubs); with none of those, from
 # the download repository's db/ ($AB_COVERS_URL), each file checked against its published .sha256.
+#
+# The build context is this directory (docker/), not the repo root, so anything the Dockerfile COPYs that
+# lives above it (the shared build helpers at /opt/ab - APPS-6) has to be staged in first, the same way the
+# cover databases are: docker/ab-src/ (git-ignored), refreshed on every run.
+#
+# This staging list is the one source for what those helpers are - .github/workflows/image.yml's push/
+# pull_request `paths:` lists a change to any of them has to match it, so a helper-only change still
+# triggers a rebuild (that workflow file says so too; keep both in step if this list grows).
 set -euo pipefail
 cd "$(dirname "$0")"
+
+mkdir -p ab-src/tools ab-src/toolchains/psc/cmake
+cp ../tools/check_psc_binary.sh ../tools/check_needed.sh ab-src/tools/
+cp ../toolchains/psc/PSCtoolchainV8.cmake ../toolchains/psc/PSCtoolchainV8-pcsx.cmake ab-src/toolchains/psc/
+cp ../toolchains/psc/cmake/FindSDL2.cmake ab-src/toolchains/psc/cmake/
 
 TAG="${AB_BUILD_IMAGE:-autobleem-build}"
 TARGET=all

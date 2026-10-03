@@ -11,7 +11,9 @@
 #                               i386 ELF for a plain i686 (no SSE2), and is run - i386 runs on the host
 #   ab-validate psc-compiler    the Stretch gcc-6 cross compiler links a C++ program against its sysroot
 #   ab-validate psc             ...and against the SDL2 family built into /opt/psc/sdl2; the binary is
-#                               ARMv8, needs nothing above GLIBC_2.24 / GLIBCXX_3.4.22, has no RPATH
+#                               ARMv8, needs nothing above GLIBC_2.24 / GLIBCXX_3.4.22, has no RPATH; also
+#                               checks /opt/ab (APPS-6) - the shared tools/toolchain files exist and the
+#                               scripts are executable
 #
 # A binary built for the console is checked the same way at build time by tools/check_psc_binary.sh.
 set -euo pipefail
@@ -73,7 +75,7 @@ case "$check" in
             $(pkg-config --cflags --libs sdl2 SDL2_image SDL2_mixer SDL2_ttf) -pthread
         "$work/native"
         clang-format --version
-        clang-tidy --version | head -2
+        clang-tidy --version | sed -n '1,2p'
         ;;
 
     pi)
@@ -85,8 +87,8 @@ case "$check" in
             -o "$work/arm64" "$work/test.cpp" -lSDL2 -lSDL2_image -lSDL2_mixer -lSDL2_ttf -pthread
         file "$work/arm64" | grep -q 'ELF 64-bit LSB.*ARM aarch64' || { file "$work/arm64"; exit 1; }
         assert_not_newer GLIBC "$(highest aarch64-linux-gnu-readelf "$work/arm64" GLIBC)" 2.36
-        echo "  armhf: $(arm-linux-gnueabihf-g++ --version | head -1)"
-        echo "  arm64: $(aarch64-linux-gnu-g++ --version | head -1)"
+        echo "  armhf: $(arm-linux-gnueabihf-g++ --version | sed -n 1p)"
+        echo "  arm64: $(aarch64-linux-gnu-g++ --version | sed -n 1p)"
         ;;
 
     pcusb)
@@ -95,7 +97,7 @@ case "$check" in
         file "$work/i386" | grep -q 'ELF 32-bit LSB.*Intel 80386' || { file "$work/i386"; exit 1; }
         assert_not_newer GLIBC "$(highest i686-linux-gnu-readelf "$work/i386" GLIBC)" 2.36
         SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy "$work/i386"
-        echo "  i386: $(i686-linux-gnu-g++ --version | head -1)"
+        echo "  i386: $(i686-linux-gnu-g++ --version | sed -n 1p)"
         ;;
 
     mingw)
@@ -105,13 +107,13 @@ case "$check" in
         file "$work/win.exe" | grep -q 'PE32+ executable.*x86-64' || { file "$work/win.exe"; exit 1; }
         ls /opt/mingw-sdl2/bin/SDL2.dll /opt/mingw-sdl2/bin/SDL2_image.dll /opt/mingw-sdl2/bin/SDL2_mixer.dll \
            /opt/mingw-sdl2/bin/SDL2_ttf.dll >/dev/null
-        echo "  $(x86_64-w64-mingw32-g++-posix --version | head -1)"
+        echo "  $(x86_64-w64-mingw32-g++-posix --version | sed -n 1p)"
         ;;
 
     psc-compiler)
         libc=/opt/psc/sysroot/lib/arm-linux-gnueabihf/libc.so.6
         grep -aqE 'GNU C Library .* version 2\.24' "$libc" || { echo "FAIL: the sysroot's libc is not 2.24" >&2; exit 1; }
-        /opt/psc/bin/armv8-sony-linux-gnueabihf-g++ --version | head -1
+        /opt/psc/bin/armv8-sony-linux-gnueabihf-g++ --version | sed -n 1p
         /opt/psc/bin/armv8-sony-linux-gnueabihf-g++ -std=c++14 -march=armv8-a -mfpu=neon-vfpv4 -mfloat-abi=hard -Os -s \
             -o "$work/plain" "$work/plain.cpp" -pthread -Wl,--verbose 2>&1 | grep -E '^(attempt to open|opened script)' \
             | grep -E 'libc\.so|libstdc\+\+|crt1' | head -8 | sed 's/^/  /' || true
@@ -154,10 +156,14 @@ case "$check" in
         echo "  SDL2 audio backends: $audio"
         [[ " $audio " == *" alsa "* ]] || { echo "FAIL: no alsa backend in libSDL2" >&2; exit 1; }
         [[ " $audio " != *" oss "* ]] || { echo "FAIL: oss backend in libSDL2 (the console has no OSS)" >&2; exit 1; }
-        # the version: 2.0.14 is the last SDL with a wl_shell window, the only shell the console's Weston has
+        # the version: autobleem_sdl's 2.0.18 (2.0.20+ needs libwayland >= 1.18, the console has 1.12), and
+        # its wl_shell window - the only shell the console's Weston 1.11 has, which SDL dropped in 2.0.16
         sdlver="$(readlink /opt/psc/sdl2/lib/libSDL2-2.0.so.0)"
         echo "  SDL2: $sdlver"
-        [[ "$sdlver" == libSDL2-2.0.so.0.1[24].0 ]] || { echo "FAIL: $sdlver - the console needs SDL2 <= 2.0.14 (wl_shell)" >&2; exit 1; }
+        [[ "$sdlver" == libSDL2-2.0.so.0.18.0 ]] || { echo "FAIL: $sdlver - the console's SDL2 is autobleem_sdl's 2.0.18" >&2; exit 1; }
+        wlshell="$(strings -a /opt/psc/sdl2/lib/libSDL2-2.0.so.0 | grep -c wl_shell || true)"
+        echo "  SDL2 wl_shell strings: $wlshell"
+        [ "$wlshell" -gt 0 ] || { echo "FAIL: no wl_shell in libSDL2 - autobleem_sdl's patch 0001 missing" >&2; exit 1; }
         # D-Bus (PSC-Bios talks to BlueZ through libdbus): the sysroot's headers and libdbus-1.so link, and the
         # result needs nothing newer than the console's glibc
         cat > "$work/dbus.c" <<'DBUS'
@@ -171,6 +177,16 @@ DBUS
             || { echo "FAIL: the D-Bus test program does not link libdbus-1.so.3" >&2; exit 1; }
         assert_not_newer GLIBC "$(highest arm-linux-gnueabihf-readelf "$work/dbus" GLIBC)" 2.24
         echo "  D-Bus: links libdbus-1.so.3"
+        # /opt/ab (APPS-6): the shared build helpers every caller used to vendor its own copy of
+        for f in /opt/ab/tools/check_psc_binary.sh /opt/ab/tools/check_needed.sh; do
+            [ -f "$f" ] || { echo "FAIL: $f missing" >&2; exit 1; }
+            [ -x "$f" ] || { echo "FAIL: $f is not executable" >&2; exit 1; }
+        done
+        for f in /opt/ab/toolchains/psc/PSCtoolchainV8.cmake /opt/ab/toolchains/psc/PSCtoolchainV8-pcsx.cmake \
+                 /opt/ab/toolchains/psc/cmake/FindSDL2.cmake; do
+            [ -f "$f" ] || { echo "FAIL: $f missing" >&2; exit 1; }
+        done
+        echo "  /opt/ab: check_psc_binary.sh, check_needed.sh, PSCtoolchainV8.cmake, PSCtoolchainV8-pcsx.cmake ok"
         ;;
 
     *)

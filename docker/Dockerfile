@@ -15,7 +15,14 @@
 #   psc     - the PlayStation Classic toolchain, AutoBleem-NG's recipe: a Debian Stretch armhf sysroot
 #             (glibc 2.24 / libstdc++ 6.0.22 - the console's own), Stretch's gcc-6 cross compiler, and the
 #             SDL2 family built from source against it, wrapped as armv8-sony-linux-gnueabihf-* so
-#             toolchains/psc/PSCtoolchainV8.cmake works with -DAB_PSC_TOOLCHAIN=/opt/psc
+#             toolchains/psc/PSCtoolchainV8.cmake works with -DAB_PSC_TOOLCHAIN=/opt/psc. Also where /opt/ab
+#             (below) lands - every PSC toolchain file needs cmake/FindSDL2.cmake, which is staged here too.
+#   /opt/ab - the shared build helpers (APPS-6), not a stage of its own: /opt/ab/tools/check_psc_binary.sh
+#             and check_needed.sh, /opt/ab/toolchains/psc/PSCtoolchainV8.cmake (the AB_ family) and
+#             PSCtoolchainV8-pcsx.cmake (the PCSXAB_ family, pcsx-abnxt only). One canonical copy each,
+#             COPYed in during the psc stage; a caller's ci/build.sh (running in this image) reads them from
+#             there instead of vendoring its own. The two make_psc.sh scripts that build over ssh on the bare
+#             Sony-toolchain server, with no image present, are the one exception and keep a repo-local copy.
 #   retroarch - the Pi runtime libraries (armhf + arm64 dev packages) ci/build_retroarch.sh cross-builds
 #             RetroArch against, for the download repository
 #   pcusb   - the 32-bit PC USB-stick appliance: Debian's i686-linux-gnu cross compiler + the i386 multiarch
@@ -44,7 +51,7 @@ ARG UPX_VERSION=5.0.2
 RUN cd /tmp && wget -q https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz \
     && tar -xf upx-${UPX_VERSION}-amd64_linux.tar.xz \
     && install -m755 upx-${UPX_VERSION}-amd64_linux/upx /usr/local/bin/upx \
-    && rm -rf upx-${UPX_VERSION}-amd64_linux* && upx --version | head -1
+    && rm -rf upx-${UPX_VERSION}-amd64_linux* && upx --version | sed -n 1p
 # cmake/generate_version.cmake reads the bind-mounted checkout's .git, which belongs to the calling uid
 RUN git config --system --add safe.directory '*'
 
@@ -127,13 +134,15 @@ COPY db/coversJ.db db/coversP.db db/coversU.db /opt/autobleem/db/
 #              libstdc++ 6.0.22, plus the -dev packages SDL2 and pcsx-ab need
 #   gcc-6/     Stretch's amd64 gcc-6/g++-6 cross packages, extracted; the newest GCC whose libstdc++ ABI
 #              matches that glibc (Bookworm's arm-linux-gnueabihf gcc would need glibc 2.34+ on the console)
-#   sdl2/      SDL2 2.0.14 + image 2.6.3 + mixer 2.6.3 + ttf 2.20.2 built here against the sysroot - the
-#              versions and backends of the console's libs.tar.gz; what a release ships in it. 2.0.14 is the
-#              ceiling: the last SDL with a wl_shell window (2.0.16 dropped it and zxdg_shell_v6), and the
-#              console's Weston 1.11 has no xdg_wm_base; 2.0.20+ also wants libwayland >= 1.18 (the console: 1.12)
+#   sdl2/      AutoBleem's SDL2 2.0.18 (github.com/autobleem2/autobleem_sdl) + image 2.6.3 + mixer 2.6.3 +
+#              ttf 2.20.2 built here against the sysroot - the versions and backends of the console's
+#              libs.tar.gz; what a release ships in it. 2.0.18 is the ceiling: 2.0.20+ wants libwayland >= 1.18
+#              (the console: 1.12), and 2.0.16 dropped the wl_shell window the console's Weston 1.11 needs (it
+#              has no xdg_wm_base) - autobleem_sdl's patch 0001 restores it
 #   bin/       armv8-sony-linux-gnueabihf-{gcc,g++,cpp} wrappers adding --sysroot, the binutils as links
 FROM db AS psc
-ARG SDL2_VERSION=2.0.14
+# autobleem_sdl's commit (SDL 2.0.18 + its patches/); a new SDL for the console = a new commit there, then here
+ARG AUTOBLEEM_SDL_REF=db65aac9f981f5d77a4ea05c3c9d64e6fd38ddfa
 ARG SDL2_IMAGE_VERSION=2.6.3
 ARG SDL2_MIXER_VERSION=2.6.3
 ARG SDL2_TTF_VERSION=2.20.2
@@ -283,32 +292,25 @@ RUN printf '%s\n' \
     'set(ENV{PKG_CONFIG_SYSROOT_DIR} "/opt/psc/sysroot")' \
     > /opt/psc/toolchain.cmake
 
-# SDL2 - the console's libSDL2 (2.0.12 until 2026-09-23, 2.0.14 since - verified on a console): autotools (a
-# CMake-built 2.0.12 left the console at a black screen in NG's testing), Wayland (shared) + dummy video,
-# GLES 1/2 through EGL, ALSA (shared) + disk + dummy audio, udev hot-plug; no X11, KMSDRM, RPi, Vulkan, OSS
-# (the console has none), PulseAudio, JACK, sndio, DBus, IBus. The tarball from libsdl.org/release: GitHub
-# has release assets from 2.0.20 on only.
+# SDL2 - the console's libSDL2 (2.0.12 until 2026-09-23, 2.0.14 until 2026-09-29, AutoBleem's patched 2.0.18
+# since): autobleem_sdl at AUTOBLEEM_SDL_REF - SDL's release-2.0.18 as a submodule plus its patches/ (the
+# wl_shell window, two GLES2 renderer fixes) - built by that repository's own ci/build.sh, which holds the
+# configure line (autotools - a CMake-built 2.0.12 left the console at a black screen in NG's testing):
+# Wayland (shared) + dummy video, GLES 1/2 through EGL, ALSA (shared) + disk + dummy audio, udev hot-plug; no
+# X11, KMSDRM, RPi, Vulkan, OSS (the console has none), PulseAudio, JACK, sndio, PipeWire, libdecor, DBus,
+# IBus; no Wayland library of our own (the console's libwayland 1.12 is loaded at run time). It checks the
+# result (2.0.18, ARM hard-float, wl_shell in it, Wayland/ALSA dynamic, no X11/OSS). Fetched by commit, only
+# that commit and the submodule's pinned one, no history.
 # The SDL family installs to its own prefix so its .pc/.cmake files hold real paths; the sysroot gets
 # links to it so a build that only knows the sysroot (toolchains/psc/cmake/FindSDL2.cmake) sees
 # usr/lib/libSDL2.so and usr/include/SDL2 there.
-RUN cd /tmp && \
-    wget -q https://www.libsdl.org/release/SDL2-${SDL2_VERSION}.tar.gz && \
-    tar -xzf SDL2-${SDL2_VERSION}.tar.gz && cd SDL2-${SDL2_VERSION} && \
-    PKG_CONFIG_LIBDIR=/opt/psc/sysroot/usr/lib/arm-linux-gnueabihf/pkgconfig:/opt/psc/sysroot/usr/share/pkgconfig \
-    PKG_CONFIG_SYSROOT_DIR=/opt/psc/sysroot \
-    CC=/opt/psc/bin/armv8-sony-linux-gnueabihf-gcc CXX=/opt/psc/bin/armv8-sony-linux-gnueabihf-g++ \
-    CFLAGS="${PSC_CFLAGS}" \
-    ./configure --host=arm-linux-gnueabihf --prefix=/opt/psc/sdl2 \
-        --enable-shared --enable-static \
-        --disable-video-x11 --enable-video-wayland --enable-wayland-shared --disable-video-wayland-qt-touch \
-        --disable-video-kmsdrm --disable-video-rpi --disable-video-vivante --disable-video-vulkan \
-        --enable-video-opengl --enable-video-opengles --enable-video-opengles1 --enable-video-opengles2 \
-        --enable-alsa --enable-alsa-shared --disable-oss --disable-pulseaudio --disable-jack --disable-sndio \
-        --enable-libudev --enable-diskaudio --enable-dummyaudio --enable-video-dummy \
-        --disable-dbus --disable-ibus --disable-rpath && \
-    make -j"$(nproc)" && make install && \
+RUN git init -q /tmp/autobleem_sdl && cd /tmp/autobleem_sdl && \
+    git fetch -q --depth 1 https://github.com/autobleem2/autobleem_sdl.git "${AUTOBLEEM_SDL_REF}" && \
+    git checkout -q FETCH_HEAD && \
+    git submodule update -q --init --depth 1 && \
+    AB_SDL_PREFIX=/opt/psc/sdl2 AB_PSC_TOOLCHAIN=/opt/psc ci/build.sh psc && \
     test -f /opt/psc/sdl2/lib/libSDL2.so && \
-    cd /tmp && rm -rf SDL2-${SDL2_VERSION}*
+    cd /tmp && rm -rf /tmp/autobleem_sdl
 
 # SDL2_image - vendored PNG + JPG only. SDL2_mixer - the backends of the console's libSDL2_mixer-2.0.so.0:
 # WAV, OGG through the sysroot's libvorbisfile (a NEEDED library, not dlopen'ed), the native MIDI parser;
@@ -339,6 +341,21 @@ RUN cd /tmp && \
 # the sysroot view of the SDL prefix (what the repo's FindSDL2.cmake reads)
 RUN ln -s /opt/psc/sdl2/include/SDL2 /opt/psc/sysroot/usr/include/SDL2 && \
     for f in /opt/psc/sdl2/lib/libSDL2*.so*; do ln -s "$f" "/opt/psc/sysroot/usr/lib/$(basename "$f")"; done
+
+# /opt/ab: the shared build helpers every caller used to vendor its own copy of (APPS-6) - check_psc_binary.sh
+# (readelf's -V, the || true fix so a symbol-less binary's empty grep does not trip set -e under `readelf -d`),
+# check_needed.sh (the bundled-library check, an optional third EXTRA_GLOB argument for a port that ships
+# binaries outside its own stage/lib layout, e.g. Amiberry's plugins/*.so*) and the two PSCtoolchainV8.cmake
+# families (AB_ - the launcher, tools, Apps/extensions/processors; PCSXAB_ - pcsx-abnxt only, pcsx-ab is no
+# longer developed). A caller's own ci/build.sh runs in this image and reads these paths directly; only the
+# Sony-toolchain-over-ssh callers (the launcher's and pcsx-abnxt's make_psc.sh, which run on the bare build
+# server, no image there) keep a repo-local fallback copy.
+# staged by build-image.sh into ab-src/ (git-ignored, the build context is docker/, not the repo root -
+# the same reason the cover databases are staged into docker/db/)
+COPY ab-src/tools/check_psc_binary.sh ab-src/tools/check_needed.sh /opt/ab/tools/
+COPY ab-src/toolchains/psc/PSCtoolchainV8.cmake ab-src/toolchains/psc/PSCtoolchainV8-pcsx.cmake /opt/ab/toolchains/psc/
+COPY ab-src/toolchains/psc/cmake/FindSDL2.cmake /opt/ab/toolchains/psc/cmake/
+RUN chmod 755 /opt/ab/tools/check_psc_binary.sh /opt/ab/tools/check_needed.sh
 RUN ab-validate psc
 
 # ---------------------------------------------------------------------------------------------------------
@@ -386,7 +403,7 @@ RUN cd /tmp \
     && ./configure --prefix=/usr/local --disable-nls --disable-fuse2fs >/dev/null \
     && make -j"$(nproc)" >/dev/null && make install >/dev/null \
     && cd /tmp && rm -rf e2fsprogs-${E2FSPROGS_VERSION}* \
-    && /usr/local/sbin/mke2fs -V 2>&1 | head -1
+    && /usr/local/sbin/mke2fs -V 2>&1 | sed -n 1p
 ENV PATH="/usr/local/sbin:${PATH}"
 # llvm-mingw: a UCRT-targeting clang/mingw cross toolchain (github.com/mstorsjo/llvm-mingw), for fast UCRT
 # Windows cross-builds on a Linux runner - the PC tools (and, with UCRT SDL2, the emulators' windows jobs)

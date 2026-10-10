@@ -405,6 +405,21 @@ RUN cd /tmp \
     && cd /tmp && rm -rf e2fsprogs-${E2FSPROGS_VERSION}* \
     && /usr/local/sbin/mke2fs -V 2>&1 | sed -n 1p
 ENV PATH="/usr/local/sbin:${PATH}"
+# rootless Pi image (tools/make_rpi_image.sh --rootless): proot >= 5.5.0 (Bookworm has 5.3.0, too old) is
+# upstream's release binary, pinned by SHA256 (GitHub's digest of the v5.5.0 "proot" asset); qemu-user-static
+# (Bookworm 7.2, no recommends) gives qemu-aarch64-static and qemu-arm-static, run by proot -q, no binfmt.
+# Check a built image:  docker run --rm autobleem-build:latest proot --version
+#                       docker run --rm autobleem-build:latest qemu-aarch64-static --version
+#                       docker run --rm autobleem-build:latest qemu-arm-static --version
+ARG PROOT_VERSION=5.5.0
+ARG PROOT_SHA256=db185300a9daabbce86aca7632d8c7fdc4249f6f153171954013b70c5f491ec0
+RUN apt-get update && apt-get install -y --no-install-recommends qemu-user-static \
+    && rm -rf /var/lib/apt/lists/* \
+    && wget -q -O /usr/local/bin/proot "https://github.com/proot-me/proot/releases/download/v${PROOT_VERSION}/proot" \
+    && echo "${PROOT_SHA256}  /usr/local/bin/proot" | sha256sum -c - \
+    && chmod 755 /usr/local/bin/proot \
+    && proot --version | sed -n 1p \
+    && qemu-aarch64-static --version | sed -n 1p && qemu-arm-static --version | sed -n 1p
 # llvm-mingw: a UCRT-targeting clang/mingw cross toolchain (github.com/mstorsjo/llvm-mingw), for fast UCRT
 # Windows cross-builds on a Linux runner - the PC tools (and, with UCRT SDL2, the emulators' windows jobs)
 # use it via /opt/win-llvm.cmake instead of a windows-latest + setup-msys2 runner. Late in the `all` stage so

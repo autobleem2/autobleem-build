@@ -441,6 +441,30 @@ RUN cd /tmp && a=sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl \
     && wget -q https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/$a.tar.gz \
     && tar -xf $a.tar.gz && install -m755 $a/sccache /usr/local/bin/sccache && rm -rf $a* \
     && sccache --version
+# Rust: lib_ableem's text engine (autobleem-core lib_ableem/rust/ab_text) is a Rust static library cargo builds
+# for the target of the CMake build it is part of. One pinned toolchain under /opt/rust, readable by any uid
+# (docker/run.sh builds as the caller), with the std of every target: thumbv7neon gnueabihf for the console and
+# the Pi (hard-float + NEON, as -mfpu=neon-vfpv4; the console's gcc-6 links it against glibc 2.24 - Rust's std
+# needs 2.17), aarch64 for the Pi 64, i586 for the PC stick (i686's std assumes SSE2, the stick's floor is a
+# Pentium III), x86_64-pc-windows-gnu for MinGW. A staticlib needs no target linker; proc-macros and build
+# scripts are host code built by the host gcc. PATH points at the toolchain itself, not at rustup's proxies,
+# so nothing writes into /opt/rust at build time; CARGO_HOME (the crates cache) is docker/run.sh's mount, and
+# a CI job (root) uses the default under /opt/rust/cargo. After sccache: a version bump rebuilds these layers.
+ARG RUST_VERSION=1.99.0
+ENV RUSTUP_HOME=/opt/rust/rustup \
+    CARGO_HOME=/opt/rust/cargo
+RUN wget -q -O /tmp/rustup-init "https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init" \
+    && chmod 755 /tmp/rustup-init \
+    && /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain ${RUST_VERSION} \
+        --target thumbv7neon-unknown-linux-gnueabihf,aarch64-unknown-linux-gnu,i586-unknown-linux-gnu,x86_64-pc-windows-gnu \
+        >/dev/null \
+    && rm -f /tmp/rustup-init \
+    && ln -s "toolchains/${RUST_VERSION}-x86_64-unknown-linux-gnu" /opt/rust/rustup/toolchain \
+    && chmod -R a+rX /opt/rust \
+    && /opt/rust/rustup/toolchain/bin/rustc --version
+ENV PATH="/opt/rust/rustup/toolchain/bin:${PATH}"
+COPY ab-validate.sh /usr/local/bin/ab-validate
+RUN ab-validate rust
 # what ci/build.sh and the toolchain files read
 ENV AB_PSC_TOOLCHAIN=/opt/psc \
     AB_MINGW_SDL2=/opt/mingw-sdl2 \

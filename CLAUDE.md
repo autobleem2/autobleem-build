@@ -15,7 +15,7 @@ It is the single source of that image (`.github/workflows/image.yml` says the la
 - `docker/run.sh`: runs any command in the image with the current checkout mounted at its own path.
 - This repo's own `.github/workflows/retroarch.yml`, which runs `ci/build_retroarch.sh` /
   `ci/build_cores.sh` in `ghcr.io/autobleem2/autobleem-build:latest`.
-- autobleem-core's CI: no file here names that repo, so check its workflows for how it pulls the image.
+- autobleem-core's CI (`.github/workflows/build.yml` there): builds and runs the core's tests in the image.
 
 ## Layout
 
@@ -32,7 +32,7 @@ It is the single source of that image (`.github/workflows/image.yml` says the la
 | `ci/build_retroarch.sh`, `ci/build_cores.sh` | RetroArch cross-build / libretro cores tarballs for the download site |
 | `.github/workflows/` | `image.yml` (publishes the image), `retroarch.yml`, `route.yml` (runner picker) |
 | `.github/actions/` | `nightly-release`, `signpath-sign`: composite actions other repos call by `autobleem2/autobleem-build/...@develop` |
-| `tools/lint.sh`, `format.sh`, `make_third_party_notices.py`, `defender_exclusions.ps1` | copied from the launcher tree; they name its paths (`lib_ableem/`, `build_win`, `E:\Programming\...`) and do nothing useful here |
+| `tools/lint.sh`, `format.sh`, `make_third_party_notices.py`, `defender_exclusions.ps1` | copied from the launcher tree; they name its paths (`lib_ableem/`, `build_win`, a Windows dev folder) and do nothing useful here |
 
 There is no `ci/build.sh` and no `docs/` here, although `run.sh`, `docker/README.md` and the Dockerfile header
 mention `ci/build.sh` and `docs/ci-plan.md`: they belong to the caller repos.

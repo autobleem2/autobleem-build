@@ -55,4 +55,5 @@ Inside the image:
 | `arm-linux-gnueabihf-*`, `aarch64-linux-gnu-*` | Debian's Pi cross compilers, SDL2 dev packages under `/usr/lib/<triplet>` |
 | `x86_64-w64-mingw32-*-posix` | mingw-w64 |
 | `clang-format`, `clang-tidy` | LLVM 22, the major MSYS2 has |
+| `/opt/rust/` | Rust (`RUST_VERSION`, pinned) with the std of every target AutoBleem builds: `thumbv7neon-unknown-linux-gnueabihf` (psc, rpi), `aarch64-unknown-linux-gnu` (rpi64), `i586-unknown-linux-gnu` (pcusb, no SSE2), `x86_64-pc-windows-gnu` (win); `cargo`/`rustc` are on `PATH`. lib_ableem's text library (`lib_ableem/rust/ab_text`) is built with it; `ab-validate rust` links a tiny Rust library with every target's compiler. `run.sh` (here and the launcher's copy) keeps cargo's download cache between runs in `$AB_CARGO_HOME` (default `~/.cache/autobleem-cargo`) |
 | `ab-validate <stage>` | the checks each layer ended with; rerun any time |

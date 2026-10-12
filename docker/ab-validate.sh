@@ -14,6 +14,9 @@
 #                               ARMv8, needs nothing above GLIBC_2.24 / GLIBCXX_3.4.22, has no RPATH; also
 #                               checks /opt/ab (APPS-6) - the shared tools/toolchain files exist and the
 #                               scripts are executable
+#   ab-validate rust            /opt/rust: a Rust staticlib for each target's triple links into a C++ program
+#                               with that target's compiler (psc: nothing above GLIBC_2.24; pcusb: runs on a
+#                               Pentium III under qemu)
 #
 # A binary built for the console is checked the same way at build time by tools/check_psc_binary.sh.
 set -euo pipefail
@@ -189,8 +192,51 @@ DBUS
         echo "  /opt/ab: check_psc_binary.sh, check_needed.sh, PSCtoolchainV8.cmake, PSCtoolchainV8-pcsx.cmake ok"
         ;;
 
+    rust)
+        # a Rust staticlib (std: a Mutex, a thread, a String) built for each target's triple and linked into a
+        # C++ program by that target's own compiler - the way lib_ableem links rust/ab_text
+        rustc --version
+        mkdir -p "$work/rs/src"
+        printf '[package]\nname = "abv"\nversion = "0.1.0"\nedition = "2021"\n[lib]\ncrate-type = ["staticlib"]\n[profile.release]\npanic = "abort"\n' \
+            > "$work/rs/Cargo.toml"
+        cat > "$work/rs/src/lib.rs" <<'RS'
+use std::sync::Mutex;
+static N: Mutex<u32> = Mutex::new(0);
+#[no_mangle]
+pub extern "C" fn abv_count(n: u32) -> u32 {
+    let t = std::thread::spawn(move || format!("{n}").len() as u32);
+    let mut g = N.lock().unwrap();
+    *g += t.join().unwrap();
+    *g
+}
+RS
+        printf '#include <cstdio>\nextern "C" unsigned abv_count(unsigned);\nint main() { std::printf("rust %%u\\n", abv_count(1234)); return abv_count(5) == 5 ? 0 : 1; }\n' \
+            > "$work/main.cpp"
+        linux_libs="-lpthread -ldl -lrt -lutil -lm"
+        rs_link() { # rs_link NAME TRIPLE CXX FLAGS...
+            local name=$1 triple=$2 cxx=$3; shift 3
+            CARGO_HOME="$work/cargo-home" CARGO_TARGET_DIR="$work/rs/target" \
+                cargo build -q --release --offline --manifest-path "$work/rs/Cargo.toml" --target "$triple"
+            # the flags and system libraries after the archive: ld resolves left to right
+            "$cxx" -std=c++14 -o "$work/rs-$name" "$work/main.cpp" "$work/rs/target/$triple/release/libabv.a" "$@"
+            echo "  $name ($triple): linked"
+        }
+        rs_link psc thumbv7neon-unknown-linux-gnueabihf /opt/psc/bin/armv8-sony-linux-gnueabihf-g++ \
+            -march=armv8-a -mfpu=neon-vfpv4 -mfloat-abi=hard -Os $linux_libs
+        assert_not_newer GLIBC "$(highest arm-linux-gnueabihf-readelf "$work/rs-psc" GLIBC)" 2.24
+        rs_link rpi thumbv7neon-unknown-linux-gnueabihf arm-linux-gnueabihf-g++ -march=armv7-a -mfpu=neon-vfpv4 -mfloat-abi=hard $linux_libs
+        rs_link rpi64 aarch64-unknown-linux-gnu aarch64-linux-gnu-g++ $linux_libs
+        rs_link pcusb i586-unknown-linux-gnu i686-linux-gnu-g++ -march=i686 $linux_libs
+        # the stick's floor is a Pentium III: the program must run on one (no SSE2 anywhere in it)
+        QEMU_CPU=pentium3 qemu-i386-static "$work/rs-pcusb"
+        rs_link win x86_64-pc-windows-gnu x86_64-w64-mingw32-g++-posix -static-libgcc -static-libstdc++ \
+            -lws2_32 -luserenv -lbcrypt -lntdll
+        # (mingw's driver names the output rs-win.exe)
+        file "$work/rs-win.exe" | grep -q 'PE32+' || { file "$work/rs-win.exe"; exit 1; }
+        ;;
+
     *)
-        echo "usage: ab-validate {native|pi|mingw|psc-compiler|psc}" >&2
+        echo "usage: ab-validate {native|pi|mingw|psc-compiler|psc|rust}" >&2
         exit 2
         ;;
 esac
